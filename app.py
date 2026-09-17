@@ -19,18 +19,19 @@ def secreto(n, d=""):
 if st.sidebar.text_input("Clave", type="password") != secreto("APP_PASSWORD", "cambiaesta"):
     st.stop()
 
-st.sidebar.header("Franja agresor")
-franja_alto = st.sidebar.slider("Alto de la franja (largo)", 0.20, 1.20, 0.62, 0.02)
-franja_min = st.sidebar.slider("Ancho de cada bloque (min)", 1, 5, 1, 1)
-fig_ancho = st.sidebar.slider("Ancho del gráfico", 10.0, 16.0, 12.2, 0.2)
-fig_alto = st.sidebar.slider("Alto del gráfico", 10.0, 16.0, 13.6, 0.2)
-st.sidebar.caption("Alto = franja más gorda. Min = bloques más anchos. Luego pulsa AYER/HOY.")
+st.sidebar.header("Franja / tamaño")
+franja_alto = st.sidebar.slider("Alto de la franja", 0.20, 1.20, 0.45, 0.02)
+franja_min = st.sidebar.slider("Ancho bloque (min)", 1, 5, 1, 1)
+fig_ancho = st.sidebar.slider("Ancho del gráfico", 10.0, 16.0, 12.4, 0.2)
+fig_alto = st.sidebar.slider("Alto del gráfico", 10.0, 16.0, 14.0, 0.2)
 
 def correr(nombre, modo):
     script = HOME / nombre
     if not script.exists():
-        st.error("Falta " + script.name); return
-    box = st.empty(); box.info(f"{nombre} · {modo}")
+        st.error("Falta " + script.name)
+        return
+    box = st.empty()
+    box.info(f"{nombre} · {modo}")
     env = os.environ.copy()
     env["UW_API_KEY"] = secreto("UW_API_KEY", "")
     env["TELEGRAM_BOT_TOKEN"] = secreto("TELEGRAM_BOT_TOKEN", "")
@@ -49,28 +50,30 @@ def correr(nombre, modo):
                        capture_output=True, text=True, cwd=str(HOME), env=env)
     box.empty()
     st.success("Listo") if p.returncode == 0 else st.error("Error")
-    if p.stdout: st.text_area("Salida", p.stdout[-3500:], height=150)
-    if p.stderr: st.text_area("Avisos", p.stderr[-1000:], height=80)
+    if p.stdout:
+        st.text_area("Salida", p.stdout[-3500:], height=150)
+    if p.stderr:
+        st.text_area("Avisos", p.stderr[-1000:], height=80)
 
 st.title("Flujo Quant")
 ny = datetime.now(ZoneInfo("America/New_York"))
 abierto = ny.weekday() < 5 and ny.replace(hour=9, minute=30) <= ny <= ny.replace(hour=16, minute=0)
-a,b,c,d = st.columns(4)
+a, b, c, d = st.columns(4)
 a.metric("NY", ny.strftime("%H:%M"))
 b.metric("Colombia", datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
 c.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
-d.metric("Franja", f"alto {franja_alto:.2f} · {franja_min} min")
+d.metric("Franja", f"{franja_alto:.2f} / {franja_min}m")
 
 t1, t2, t3 = st.tabs(["Intradía", "Swing", "Dashboard"])
 with t1:
-    f1,f2,f3,f4 = st.columns(4)
+    f1, f2, f3, f4 = st.columns(4)
     min_p = f1.number_input("Prima mín $", 50000, 3000000, 120000, 10000)
     umb = f2.number_input("Burbuja $M (0=auto)", 0, 500, 0, 5)
     alerta = f3.number_input("Alerta Telegram $M", 0.5, 20.0, 2.0, 0.5)
     dte = f4.checkbox("Solo 0DTE/1DTE")
     os.environ["MIN_PREMIUM"] = str(min_p)
-    os.environ["UMBRAL_BURBUJA"] = str(int(umb)*1_000_000)
-    os.environ["ALERTA_USD"] = str(int(alerta*1_000_000))
+    os.environ["UMBRAL_BURBUJA"] = str(int(umb) * 1_000_000)
+    os.environ["ALERTA_USD"] = str(int(alerta * 1_000_000))
     os.environ["SOLO_0DTE"] = "1" if dte else "0"
     if st.checkbox("Vivo 3 min (solo HOY)") and abierto:
         try:
@@ -79,14 +82,20 @@ with t1:
             correr("flujo2.py", "HOY")
         except Exception as e:
             st.error(e)
-    x,y,z = st.columns(3)
-    if x.button("Solo AYER", width="stretch"): correr("flujo2.py","AYER")
-    if y.button("AYER + HOY", type="primary", width="stretch"): correr("flujo2.py","AMBOS")
-    if z.button("Solo HOY", width="stretch"): correr("flujo2.py","HOY")
+    x, y, z = st.columns(3)
+    if x.button("Solo AYER", width="stretch"):
+        correr("flujo2.py", "AYER")
+    if y.button("AYER + HOY", type="primary", width="stretch"):
+        correr("flujo2.py", "AMBOS")
+    if z.button("Solo HOY", width="stretch"):
+        correr("flujo2.py", "HOY")
 
 with t2:
     if st.button("Generar Swing", width="stretch"):
-        correr("flujo_swing.py", "AMBOS") if (HOME/"flujo_swing.py").exists() else st.warning("Falta swing")
+        if (HOME / "flujo_swing.py").exists():
+            correr("flujo_swing.py", "AMBOS")
+        else:
+            st.warning("Falta flujo_swing.py")
 
 with t3:
     res = CARPETA / "resumen.json"
