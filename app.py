@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import subprocess
 import sys
+import os
 from pathlib import Path
-
 HOME = Path(__file__).resolve().parent
 CARPETA = HOME / "flujos"
 CARPETA.mkdir(exist_ok=True)
@@ -26,11 +26,18 @@ def correr(nombre):
         return
     caja = st.empty()
     caja.info(f"Ejecutando {nombre}… puede tardar 1–3 minutos")
+    env = os.environ.copy()
+    try:
+        env["UW_API_KEY"] = st.secrets.get("UW_API_KEY", env.get("UW_API_KEY", ""))
+    except Exception:
+        pass
+    env["FLUJOS_DIR"] = str(HOME / "flujos")
     p = subprocess.run(
         [sys.executable, "-u", str(script)],
         capture_output=True,
         text=True,
         cwd=str(HOME),
+        env=env,
     )
     caja.empty()
     if p.returncode == 0:

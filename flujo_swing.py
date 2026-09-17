@@ -35,7 +35,7 @@ LIMIT = 150
 MAX_ETIQUETAS = 8
 TZ = ZoneInfo("America/New_York")
 TZ_COL = ZoneInfo("America/Bogota")
-CARPETA = os.path.join(os.path.expanduser("~"), "flujos")
+CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
 os.makedirs(CARPETA, exist_ok=True)
 headers = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
 
