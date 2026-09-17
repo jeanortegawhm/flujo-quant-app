@@ -83,11 +83,11 @@ d.metric("Franja", f"{franja_alto:.2f} / {franja_min}m")
 t1, t2, t3, t4, t5 = st.tabs(["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "GEX · OI · DP"])
 
 with t1:
-    f1, f2, f3, f4 = st.columns(4)
+    f1, f2, f3, f4b = st.columns(4)
     min_p = f1.number_input("Prima mín $", 50000, 3000000, 120000, 10000)
     umb = f2.number_input("Burbuja $M (0=auto)", 0, 500, 0, 5)
     alerta = f3.number_input("Alerta Telegram $M", 0.5, 20.0, 2.0, 0.5)
-    dte = f4.checkbox("Solo 0DTE/1DTE")
+    dte = f4b.checkbox("Solo 0DTE/1DTE")
     os.environ["MIN_PREMIUM"] = str(min_p)
     os.environ["UMBRAL_BURBUJA"] = str(int(umb) * 1_000_000)
     os.environ["ALERTA_USD"] = str(int(alerta * 1_000_000))
@@ -138,20 +138,27 @@ with t3:
                 im_txt = f"{float(im)*100:.2f}%" if im else "—"
                 st.write(f"IVP {ivp_txt} · IVR {ivr_txt} · IM {im_txt}")
                 st.write(f"flow {float(row.get('flow_ratio') or 0):.2f}")
-    with t4:
+    else:
+        st.info("Aún no hay resumen.json. Corre Solo AYER o Solo HOY.")
+    pngs = sorted(CARPETA.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
+    for p in pngs[:8]:
+        if p.stat().st_size <= 3_500_000:
+            st.image(str(p), caption=p.name, width="stretch")
+
+with t4:
     st.subheader("Mismo mercado, dos libros")
-    st.caption("QQQ no reemplaza a NDX. Si en el ETF se ve una zona y en el índice no, vigila esa zona; no la compres sola.")
+    st.caption("QQQ no reemplaza a NDX. Si el ETF muestra una zona y el índice no, vigílala; no la compres sola.")
     try:
         from paneles import PARES, gex_niveles
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
-        for a, b in PARES:
+        for par_a, par_b in PARES:
             c1, c2 = st.columns(2)
-            na, nb = gex_niveles(a, hoy), gex_niveles(b, hoy)
+            na, nb = gex_niveles(par_a, hoy), gex_niveles(par_b, hoy)
             with c1:
-                st.markdown(f"**{a}**")
+                st.markdown(f"**{par_a}**")
                 st.write(na or "sin datos")
             with c2:
-                st.markdown(f"**{b}**")
+                st.markdown(f"**{par_b}**")
                 st.write(nb or "sin datos")
     except Exception as e:
         st.error(e)
@@ -162,11 +169,12 @@ with t5:
     try:
         from paneles import gex_niveles, oi_vol, darkpool
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
-        g, o = gex_niveles(tk, hoy), oi_vol(tk, hoy)
-        a, b, c = st.columns(3)
-        a.metric("Call wall", str((g or {}).get("call_wall", "—")))
-        b.metric("Put wall", str((g or {}).get("put_wall", "—")))
-        c.metric("Gamma flip", str((g or {}).get("gamma_flip", "—")))
+        g = gex_niveles(tk, hoy)
+        o = oi_vol(tk, hoy)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Call wall", str((g or {}).get("call_wall", "—")))
+        c2.metric("Put wall", str((g or {}).get("put_wall", "—")))
+        c3.metric("Gamma flip", str((g or {}).get("gamma_flip", "—")))
         st.write("Options volume / OI", o or "sin datos")
         dp = darkpool(tk)
         if dp is not None and not dp.empty:
@@ -174,11 +182,4 @@ with t5:
         else:
             st.info("Dark pool no disponible en este plan o ticker.")
     except Exception as e:
-        st.error(e)            
-    else:
-        st.info("Aún no hay resumen.json. Corre Solo AYER o Solo HOY.")
-
-    pngs = sorted(CARPETA.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in pngs[:8]:
-        if p.stat().st_size <= 3_500_000:
-            st.image(str(p), caption=p.name, width="stretch")
+        st.error(e)
