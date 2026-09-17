@@ -119,14 +119,21 @@ with tab2:
 with tab3:
     st.subheader("Gráficos generados")
     pngs = sorted(CARPETA.glob("*.png"), key=os.path.getmtime, reverse=True)
+    
     if not pngs:
         st.info("Aún no hay gráficos. Genera primero desde Intradía.")
     else:
-        for p in pngs[:8]:
+        mostrados = 0
+        for p in pngs:
+            if mostrados >= 8:
+                break
             try:
+                # Ignorar archivos muy grandes (más de 8 MB)
+                if p.stat().st_size > 8_000_000:
+                    continue
                 st.image(str(p), caption=p.name, use_container_width=True)
+                mostrados += 1
             except Exception as e:
-                st.warning(f"No se pudo mostrar {p.name}: {e}")
-
+                st.warning(f"No se pudo mostrar {p.name}")
 st.markdown("---")
 st.caption("Uso personal / pocos usuarios. No publiques el link ni la API key.")
