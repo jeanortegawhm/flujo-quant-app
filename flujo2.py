@@ -144,14 +144,86 @@ def gex_por_strike(tk, fecha, spot):
         df = df[abs(df["strike"] - spot) / max(abs(spot), 1) <= 0.03]
     return df.sort_values("strike")
 
-def vol_stats(tk, fecha):
-    out = {"iv": None}
-    d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/volatility/stats", {"date": str(fecha)})
-    if isinstance(d, dict):
-        out["iv"] = num(d.get("iv"))
-        if out["iv"] and out["iv"] < 5:
-            out["iv"] *= 100
+def vol_extra(tk, fecha):
+    """IV 30d, percentil, implied move 1d."""
+    out = {"iv": None, "ivp": None, "ivr": None, "imp_move": None, "imp_move_pct": None}
+    rows = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/interpolated-iv", {"date": str(fecha)})
+    if isinstance(rows, list) and rows:
+        d1 = next((r for r in rows if num(r.get("days")) == 1), None)
+        d30 = next((r for r in rows if num(r.get("days")) == 30), rows[-1] if rows else None)
+        if d1:
+            out["imp_move_pct"] = num(d1.get("implied_move_perc"))
+        if d30:
+            out["iv"] = num(d30.get("volatility"))
+            out["ivp"] = num(d30.get("percentile"))
+    rk = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/iv-rank", {"date": str(fecha)})
+    if isinstance(rk, dict):
+        out["ivr"] = num(rk.get("iv_rank") or rk.get("rank"))
+    elif isinstance(rk, list) and rk:
+        last = rk[-1] if isinstance(rk[-1], dict) else {}
+        out["ivr"] = num(last.get("iv_rank") or last.get("rank"))
+    st = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/volatility/stats", {"date": str(fecha)})
+    if isinstance(st, dict):
+        if out["iv"] is None:
+            out["iv"] = num(st.get("iv") or st.get("iv30"))
+        if out["ivr"] is None:
+            out["ivr"] = num(st.get("iv_rank"))
+        if out["ivp"] is None:
+            out["ivp"] = num(st.get("iv_percentile") or st.get("percentile"))
+    if out["iv"] and out["iv"] < 3:
+        out["iv"] *= 100
     return out
+
+def qdelta_30m(df):
+    if df is None or df.empty:
+        return 0.0
+    t1 = df["hora"].max()
+    t0 = t1 - pd.Timedelta(minutes=30)
+    return float(df.loc[df["hora"] >= t0, "qdelta"].sum())
+
+def semaforo(last, niv, ratio, qd30, vol, hi, lo):
+    """3 pilares. Señal solo con 2/3 o 3/3 al mismo lado."""
+    qf, pw, cw = niv.get("QF"), niv.get("PW"), niv.get("CW")
+    p1 = 0
+    if qf:
+        p1 = 1 if last >= qf else -1
+    if pw and last < pw:
+        p1 = -1
+    if cw and last > cw:
+        p1 = 1
+    p2 = 0
+    if qd30 > 0 and ratio >= 1.15:
+        p2 = 1
+    elif qd30 < 0 and ratio <= 0.85:
+        p2 = -1
+    elif qd30 > 0:
+        p2 = 1
+    elif qd30 < 0:
+        p2 = -1
+    rng = (hi - lo) / max(abs(last), 1)
+    imp = vol.get("imp_move_pct") or 0
+    ivp = vol.get("ivp") or vol.get("ivr") or 50
+    p3 = 0
+    if imp and rng < imp * 0.7:
+        p3 = p2 if p2 else p1
+    elif imp and rng > imp:
+        p3 = 0
+    if ivp and ivp >= 80:
+        p3 = 0
+    votos = [p1, p2, p3]
+    n_up = sum(1 for v in votos if v > 0)
+    n_dn = sum(1 for v in votos if v < 0)
+    if n_up >= 2 and n_up > n_dn:
+        color, txt = "🟢", f"{n_up}/3 ALCISTA"
+    elif n_dn >= 2 and n_dn > n_up:
+        color, txt = "🔴", f"{n_dn}/3 BAJISTA"
+    else:
+        color, txt = "🟡", f"{max(n_up, n_dn)}/3 NEUTRO"
+    return {
+        "p1": p1, "p2": p2, "p3": p3,
+        "n_up": n_up, "n_dn": n_dn,
+        "color": color, "texto": txt,
+    }
 
 def net_prem(tk, fecha):
     vac = {"net_call": 0, "net_put": 0, "flow_ratio": 1.0, "serie": pd.Series(dtype=float)}
@@ -276,7 +348,7 @@ def precio(grupo, fecha):
     px.index = px.index.tz_localize("America/New_York") if px.index.tz is None else px.index.tz_convert(TZ)
     return px[px.index.date == fecha].between_time("09:30", "16:00")
 
-def grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex_df):
+def grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex_df, extra):
     px = precio(grupo, fecha)
     if px.empty:
         print("  sin precio", grupo)
@@ -393,18 +465,19 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex_df):
     axG.set_ylabel("GEX strike", color=fg, fontsize=7)
 
     ratio = float(net.get("flow_ratio", 1) or 1)
-    qf = niv.get("QF")
-    qf_ok = qf is not None and (lo - pad <= qf <= hi + pad)
-    regimen = "GEX+" if qf_ok and last >= qf else "GEX-" if qf_ok and last < qf else "GEX?"
-    sesgo = "ALCISTA" if ratio >= 1.4 else "BAJISTA" if ratio <= 0.7 else "NEUTRO"
-    iv = f"  IV {vol['iv']:.1f}%" if vol.get("iv") else ""
+    qd30 = extra.get("qd30", 0)
+    sem = extra.get("sem", {"texto": "—", "color": "🟡"})
+    iv = f" IV {vol['iv']:.1f}%" if vol.get("iv") else ""
+    ivp = f" IVP {vol['ivp']:.0f}" if vol.get("ivp") is not None else ""
+    im = f" IM {vol['imp_move_pct']*100:.2f}%" if vol.get("imp_move_pct") else ""
     ax1.set_title(
-        f"{grupo}  {etiqueta}  {fecha}   |   {regimen} {sesgo}   |   qΔ {fmt_usd(neto)}   flow {ratio:.2f}{iv}",
-        color=fg, loc="left", fontsize=11, pad=6,
+        f"{grupo} {etiqueta} {fecha}  |  {sem['color']} {sem['texto']}  |  "
+        f"qΔ {fmt_usd(neto)}  30m {fmt_usd(qd30)}  flow {ratio:.2f}{iv}{ivp}{im}",
+        color=fg, loc="left", fontsize=10, pad=6,
     )
     fig.text(0.01, 0.008,
              f"NY {datetime.now(TZ):%H:%M}  COL {datetime.now(TZ_COL):%H:%M}  "
-             f"$ C/P DTE SWP|BLK  |  print ≠ dirección ETF",
+             f"P1 GEX  P2 flujo 30m  P3 vol/IM  |  print ≠ dirección ETF",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
     ruta = os.path.join(CARPETA, f"{grupo}_{etiqueta}_{fecha}_{datetime.now(TZ):%H%M%S}.png")
@@ -413,7 +486,11 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex_df):
     print("  PNG", ruta)
     return {
         "ticker": grupo, "modo": etiqueta, "fecha": str(fecha),
-        "regimen": regimen, "sesgo": sesgo, "qdelta": neto, "flow_ratio": ratio,
+        "semaforo": sem["texto"], "color": sem["color"],
+        "p1": sem["p1"], "p2": sem["p2"], "p3": sem["p3"],
+        "qdelta": neto, "qd30": qd30, "flow_ratio": ratio,
+        "iv": vol.get("iv"), "ivp": vol.get("ivp"), "ivr": vol.get("ivr"),
+        "imp_move_pct": vol.get("imp_move_pct"),
         "cw": niv.get("CW"), "pw": niv.get("PW"), "qf": niv.get("QF"),
     }
 
@@ -429,6 +506,8 @@ def procesar(fecha, etiqueta, resumen):
         px = precio(grupo, fecha)
         spot = float(px["Close"].iloc[-1]) if not px.empty else None
         df = recalcular_expo(df, spot)
+        lo = float(px["Low"].min()) if not px.empty and "Low" in px.columns else (spot or 0)
+        hi = float(px["High"].max()) if not px.empty and "High" in px.columns else (spot or 0)
         niv, gex = {}, pd.DataFrame()
         for tk in ticks:
             for k, v in niveles(tk, fecha, spot).items():
@@ -436,7 +515,7 @@ def procesar(fecha, etiqueta, resumen):
                     niv[k] = v
             if gex.empty:
                 gex = gex_por_strike(tk, fecha, spot)
-        vol = vol_stats(ticks[0], fecha)
+        vol = vol_extra(ticks[0], fecha)
         net = net_prem(ticks[0], fecha)
         if grupo == "SPX" and "SPXW" in ticks:
             n2 = net_prem("SPXW", fecha)
@@ -444,13 +523,16 @@ def procesar(fecha, etiqueta, resumen):
             net["net_put"] += n2["net_put"]
             if len(n2["serie"]):
                 net["serie"] = net["serie"].add(n2["serie"], fill_value=0)
-        card = grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex)
+        qd30 = qdelta_30m(df)
+        sem = semaforo(spot or 0, niv, net["flow_ratio"], qd30, vol, hi, lo)
+        extra = {"qd30": qd30, "sem": sem}
+        card = grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex, extra)
         if card:
             resumen.append(card)
         if df is not None and not df.empty:
             for _, r in df.nlargest(3, "exposicion").iterrows():
                 if r["exposicion"] >= ALERTA_USD:
-                    telegram(f"{grupo} {etiqueta} {fmt_usd(r['exposicion'])} {r['contrato']} {r['estilo']}")
+                    telegram(f"{grupo} {sem['texto']} {fmt_usd(r['exposicion'])} {r['contrato']} {r['estilo']}")
 
 def main():
     if not API_KEY:
