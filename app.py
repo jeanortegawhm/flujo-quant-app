@@ -1,12 +1,10 @@
 import streamlit as st
-import pandas as pd
 import subprocess
 import sys
 import os
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(page_title="Flujo Quant · Institucional", page_icon="📊", layout="wide")
 
@@ -14,12 +12,12 @@ HOME = Path(__file__).resolve().parent
 CARPETA = HOME / "flujos"
 CARPETA.mkdir(exist_ok=True)
 
+# Estilo oscuro
 st.markdown("""
 <style>
     .stApp { background-color: #0b1220; color: #e8eef7; }
     .stButton>button { background-color: #1a2332; color: #e8eef7; border: 1px solid #2d3a4f; }
     .stButton>button:hover { border-color: #7eb6ff; }
-    div[data-testid="stMetricValue"] { font-size: 1.3rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -28,13 +26,16 @@ def correr(nombre, modo="AMBOS"):
     if not script.exists():
         st.error(f"No encuentro {script}")
         return
+
     caja = st.empty()
-    caja.info(f"Ejecutando {nombre} ({modo})… esto puede tardar 1-3 min")
+    caja.info(f"Ejecutando {nombre} ({modo})… puede tardar 1-3 min")
+
     env = os.environ.copy()
     try:
         env["UW_API_KEY"] = st.secrets.get("UW_API_KEY", env.get("UW_API_KEY", ""))
     except Exception:
         pass
+
     env["FLUJOS_DIR"] = str(CARPETA)
     env["MODO_FLUJO"] = modo
     env["MIN_PREMIUM"] = os.environ.get("MIN_PREMIUM", "120000")
@@ -46,16 +47,18 @@ def correr(nombre, modo="AMBOS"):
         capture_output=True, text=True, cwd=str(HOME), env=env
     )
     caja.empty()
+
     if p.returncode == 0:
         st.success("Listo")
     else:
         st.error("Terminó con error")
-    if p.stdout:
-        st.text_area("Salida", p.stdout[-5000:], height=200)
-    if p.stderr:
-        st.text_area("Avisos", p.stderr[-2000:], height=120)
 
-# Header
+    if p.stdout:
+        st.text_area("Salida", p.stdout[-4000:], height=180)
+    if p.stderr:
+        st.text_area("Avisos", p.stderr[-1500:], height=100)
+
+# ========== HEADER ==========
 st.title("Flujo Quant · Terminal Institucional")
 st.caption("GEX · Net Premium · Q-Delta · Unusual Flow")
 
@@ -65,11 +68,13 @@ abierto = ny.weekday() < 5 and (
     <= ny <=
     ny.replace(hour=16, minute=0, second=0, microsecond=0)
 )
-col1, col2, col3 = st.columns(3)
-col1.metric("Nueva York", ny.strftime("%H:%M:%S"))
-col2.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
-col3.metric("Colombia", datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
 
+c1, c2, c3 = st.columns(3)
+c1.metric("Nueva York", ny.strftime("%H:%M:%S"))
+c2.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
+c3.metric("Colombia", datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
+
+# ========== PESTAÑAS ==========
 tab1, tab2, tab3 = st.tabs(["Intradía", "Swing", "Resultados"])
 
 with tab1:
@@ -93,18 +98,22 @@ with tab1:
         if not abierto:
             st.warning("Mercado cerrado. El vivo solo corre 9:30–16:00 NY.")
         else:
-            st_autorefresh(interval=180_000, key="vivo")
-            st.info("Vivo activo · deja esta pestaña abierta")
-            correr("flujo2.py", "HOY")
+            try:
+                from streamlit_autorefresh import st_autorefresh
+                st_autorefresh(interval=180_000, key="vivo")
+                st.info("Vivo activo · deja esta pestaña abierta")
+                correr("flujo2.py", "HOY")
+            except Exception as e:
+                st.error(f"No se pudo activar el vivo: {e}")
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
+    b1, b2, b3 = st.columns(3)
+    with b1:
         if st.button("Solo AYER", use_container_width=True):
             correr("flujo2.py", "AYER")
-    with c2:
+    with b2:
         if st.button("AYER + HOY", type="primary", use_container_width=True):
             correr("flujo2.py", "AMBOS")
-    with c3:
+    with b3:
         if st.button("Solo HOY", use_container_width=True):
             correr("flujo2.py", "HOY")
 
@@ -118,23 +127,27 @@ with tab2:
 
 with tab3:
     st.subheader("Gráficos generados")
-    pngs = sorted(CARPETA.glob("*.png"), key=os.path.getmtime, reverse=True)
-
-    if not pngs:
-        st.info("Aún no hay gráficos. Genera primero desde Intradía.")
-    else:
-        mostrados = 0
-        for p in pngs:
-            if mostrados >= 8:
-                break
-            try:
-                # Ignorar imágenes demasiado grandes (más de 6 MB)
-                if p.stat().st_size > 6_000_000:
+    try:
+        pngs = sorted(CARPETA.glob("*.png"), key=os.path.getmtime, reverse=True)
+        if not pngs:
+            st.info("Aún no hay gráficos. Genera primero desde Intradía.")
+        else:
+            mostrados = 0
+            for p in pngs:
+                if mostrados >= 6:
+                    break
+                try:
+                    # Solo mostrar si es menor a 5 MB
+                    if p.stat().st_size > 5_000_000:
+                        continue
+                    st.image(str(p), caption=p.name, use_container_width=True)
+                    mostrados += 1
+                except Exception:
                     continue
-                st.image(str(p), caption=p.name, use_container_width=True)
-                mostrados += 1
-            except Exception as e:
-                st.warning(f"No se pudo mostrar {p.name}")
+            if mostrados == 0:
+                st.warning("Hay gráficos, pero son demasiado grandes para mostrarlos aquí.")
+    except Exception as e:
+        st.error(f"Error al cargar gráficos: {e}")
 
 st.markdown("---")
-st.caption("Uso personal / pocos usuarios. No publiques el link ni la API key.")
+st.caption("Uso personal. No publiques el link ni la API key.")
