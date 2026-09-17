@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import subprocess
+import sys
 from pathlib import Path
 
 HOME = Path(__file__).resolve().parent
@@ -22,12 +23,11 @@ def correr(nombre):
     script = HOME / nombre
     if not script.exists():
         st.error(f"No encuentro {script}")
-        st.info("Guárdalo en C:\\Users\\Jean Ortega")
         return
     caja = st.empty()
     caja.info(f"Ejecutando {nombre}… puede tardar 1–3 minutos")
     p = subprocess.run(
-        ["python", "-u", str(script)],
+        [sys.executable, "-u", str(script)],
         capture_output=True,
         text=True,
         cwd=str(HOME),
