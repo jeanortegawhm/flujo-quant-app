@@ -3,7 +3,7 @@ import pandas as pd
 import subprocess
 from pathlib import Path
 
-HOME = Path.home()
+HOME = Path(__file__).resolve().parent
 CARPETA = HOME / "flujos"
 CARPETA.mkdir(exist_ok=True)
 
