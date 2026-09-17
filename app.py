@@ -80,7 +80,7 @@ b.metric("Colombia", datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
 c.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
 d.metric("Franja", f"{franja_alto:.2f} / {franja_min}m")
 
-t1, t2, t3 = st.tabs(["Intradía", "Swing", "Dashboard"])
+t1, t2, t3, t4, t5 = st.tabs(["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "GEX · OI · DP"])
 
 with t1:
     f1, f2, f3, f4 = st.columns(4)
@@ -138,6 +138,43 @@ with t3:
                 im_txt = f"{float(im)*100:.2f}%" if im else "—"
                 st.write(f"IVP {ivp_txt} · IVR {ivr_txt} · IM {im_txt}")
                 st.write(f"flow {float(row.get('flow_ratio') or 0):.2f}")
+    with t4:
+    st.subheader("Mismo mercado, dos libros")
+    st.caption("QQQ no reemplaza a NDX. Si en el ETF se ve una zona y en el índice no, vigila esa zona; no la compres sola.")
+    try:
+        from paneles import PARES, gex_niveles
+        hoy = datetime.now(ZoneInfo("America/New_York")).date()
+        for a, b in PARES:
+            c1, c2 = st.columns(2)
+            na, nb = gex_niveles(a, hoy), gex_niveles(b, hoy)
+            with c1:
+                st.markdown(f"**{a}**")
+                st.write(na or "sin datos")
+            with c2:
+                st.markdown(f"**{b}**")
+                st.write(nb or "sin datos")
+    except Exception as e:
+        st.error(e)
+
+with t5:
+    st.subheader("Confirmación, no señal")
+    tk = st.selectbox("Ticker", ["QQQ", "NDX", "SPY", "SPX", "IWM", "IBIT", "GLD"])
+    try:
+        from paneles import gex_niveles, oi_vol, darkpool
+        hoy = datetime.now(ZoneInfo("America/New_York")).date()
+        g, o = gex_niveles(tk, hoy), oi_vol(tk, hoy)
+        a, b, c = st.columns(3)
+        a.metric("Call wall", str((g or {}).get("call_wall", "—")))
+        b.metric("Put wall", str((g or {}).get("put_wall", "—")))
+        c.metric("Gamma flip", str((g or {}).get("gamma_flip", "—")))
+        st.write("Options volume / OI", o or "sin datos")
+        dp = darkpool(tk)
+        if dp is not None and not dp.empty:
+            st.dataframe(dp, width="stretch")
+        else:
+            st.info("Dark pool no disponible en este plan o ticker.")
+    except Exception as e:
+        st.error(e)            
     else:
         st.info("Aún no hay resumen.json. Corre Solo AYER o Solo HOY.")
 
