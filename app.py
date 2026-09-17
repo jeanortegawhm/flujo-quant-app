@@ -23,7 +23,7 @@ st.sidebar.header("Franja agresor")
 franja_alto = st.sidebar.slider("Alto de la franja (largo)", 0.20, 1.20, 0.62, 0.02)
 franja_min = st.sidebar.slider("Ancho de cada bloque (min)", 1, 5, 1, 1)
 fig_ancho = st.sidebar.slider("Ancho del gráfico", 10.0, 16.0, 12.2, 0.2)
-fig_alto = st.sidebar.slider("Alto del gráfico", 9.0, 16.0, 12.4, 0.2)
+fig_alto = st.sidebar.slider("Alto del gráfico", 10.0, 16.0, 13.6, 0.2)
 st.sidebar.caption("Alto = franja más gorda. Min = bloques más anchos. Luego pulsa AYER/HOY.")
 
 def correr(nombre, modo):
