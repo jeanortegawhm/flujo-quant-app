@@ -186,7 +186,6 @@ with t5:
         h.metric("Put vol", f"{float(o.get('put_volume') or 0):,.0f}")
         st.pyplot(fig_gex(tk, df, g, spot), width="stretch")
         st.pyplot(fig_oi(tk, o), width="stretch")
-        dp = darkpool(tk)
-        st.pyplot(fig_dp(tk, dp), width="stretch")
+        st.pyplot(fig_dp(tk, darkpool(tk)), width="stretch")
     except Exception as e:
         st.error(e)
