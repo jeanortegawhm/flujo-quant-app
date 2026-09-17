@@ -147,39 +147,46 @@ with t3:
 
 with t4:
     st.subheader("Mismo mercado, dos libros")
-    st.caption("QQQ no reemplaza a NDX. Si el ETF muestra una zona y el índice no, vigílala; no la compres sola.")
+    st.caption("QQQ no reemplaza a NDX. Si el ETF muestra zona y el índice no, vigílala; no la compres sola.")
+    os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
     try:
-        from paneles import PARES, gex_niveles
+        from paneles import PARES, gex_niveles, gex_strikes, fig_gex
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
         for par_a, par_b in PARES:
             c1, c2 = st.columns(2)
-            na, nb = gex_niveles(par_a, hoy), gex_niveles(par_b, hoy)
-            with c1:
-                st.markdown(f"**{par_a}**")
-                st.write(na or "sin datos")
-            with c2:
-                st.markdown(f"**{par_b}**")
-                st.write(nb or "sin datos")
+            for col, tk in ((c1, par_a), (c2, par_b)):
+                with col:
+                    niv = gex_niveles(tk, hoy)
+                    spot = niv.get("gamma_flip") or niv.get("call_wall")
+                    df = gex_strikes(tk, hoy, spot)
+                    st.pyplot(fig_gex(tk, df, niv, spot), width="stretch")
     except Exception as e:
         st.error(e)
 
 with t5:
     st.subheader("Confirmación, no señal")
+    os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
     tk = st.selectbox("Ticker", ["QQQ", "NDX", "SPY", "SPX", "IWM", "IBIT", "GLD"])
     try:
-        from paneles import gex_niveles, oi_vol, darkpool
+        from paneles import gex_niveles, gex_strikes, oi_vol, darkpool, fig_gex, fig_oi, fig_dp
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
         g = gex_niveles(tk, hoy)
         o = oi_vol(tk, hoy)
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Call wall", str((g or {}).get("call_wall", "—")))
-        c2.metric("Put wall", str((g or {}).get("put_wall", "—")))
-        c3.metric("Gamma flip", str((g or {}).get("gamma_flip", "—")))
-        st.write("Options volume / OI", o or "sin datos")
+        spot = g.get("gamma_flip") or g.get("call_wall")
+        df = gex_strikes(tk, hoy, spot)
+        a, b, c, d = st.columns(4)
+        a.metric("Call wall", str(g.get("call_wall", "—")))
+        b.metric("Put wall", str(g.get("put_wall", "—")))
+        c.metric("Gamma flip", str(g.get("gamma_flip", "—")))
+        d.metric("Magnet", str(g.get("gamma_magnet", "—")))
+        e, f, g2, h = st.columns(4)
+        e.metric("Call OI", f"{float(o.get('call_open_interest') or 0):,.0f}")
+        f.metric("Put OI", f"{float(o.get('put_open_interest') or 0):,.0f}")
+        g2.metric("Call vol", f"{float(o.get('call_volume') or 0):,.0f}")
+        h.metric("Put vol", f"{float(o.get('put_volume') or 0):,.0f}")
+        st.pyplot(fig_gex(tk, df, g, spot), width="stretch")
+        st.pyplot(fig_oi(tk, o), width="stretch")
         dp = darkpool(tk)
-        if dp is not None and not dp.empty:
-            st.dataframe(dp, width="stretch")
-        else:
-            st.info("Dark pool no disponible en este plan o ticker.")
+        st.pyplot(fig_dp(tk, dp), width="stretch")
     except Exception as e:
         st.error(e)
