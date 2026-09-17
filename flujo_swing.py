@@ -1,5 +1,4 @@
-import os
-import requests
+import os, time, warnings, requests
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -7,8 +6,7 @@ import matplotlib.dates as mdates
 import yfinance as yf
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import time
-import warnings
+
 warnings.filterwarnings("ignore")
 
 API_KEY = os.getenv("UW_API_KEY", "")
@@ -29,15 +27,17 @@ MIN_BURBUJA = {
     "SPX": 250_000_000, "SPY": 200_000_000, "QQQ": 200_000_000,
     "IWM": 50_000_000, "IBIT": 15_000_000, "GLD": 100_000_000,
 }
+
 DIAS = 15
 MIN_PREMIUM = 250000
 LIMIT = 150
-MAX_ETIQUETAS = 8
+MAX_ETIQUETAS = 6
 TZ = ZoneInfo("America/New_York")
 TZ_COL = ZoneInfo("America/Bogota")
 CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
 os.makedirs(CARPETA, exist_ok=True)
 headers = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
+
 
 def num(x):
     try:
@@ -47,11 +47,13 @@ def num(x):
     except Exception:
         return None
 
+
 def pct(x):
     v = num(x)
     if v is None:
         return None
     return v * 100 if abs(v) <= 3 else v
+
 
 def fmt_usd(x):
     x = float(x or 0)
@@ -62,6 +64,7 @@ def fmt_usd(x):
     if x >= 1e6:
         return f"{s}${x/1e6:.1f}M"
     return f"{s}${x:,.0f}"
+
 
 def get_json(url, params=None):
     try:
@@ -74,6 +77,7 @@ def get_json(url, params=None):
         print("  api:", e)
         return None
 
+
 def habiles(n=DIAS):
     d, out = datetime.now(TZ).date(), []
     while len(out) < n:
@@ -82,15 +86,21 @@ def habiles(n=DIAS):
         d -= timedelta(days=1)
     return list(reversed(out))
 
+
 def cerca(v, spot, p=0.04):
     return v is not None and spot and abs(v - spot) / abs(spot) <= p
 
+
 def obtener_niveles(tk, fecha, spot):
-    data = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
-                    {"date": str(fecha), "source": "oi"})
+    data = get_json(
+        f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
+        {"date": str(fecha), "source": "oi"},
+    )
     if not isinstance(data, dict):
-        data = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
-                        {"date": str(fecha), "source": "vol"})
+        data = get_json(
+            f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
+            {"date": str(fecha), "source": "vol"},
+        )
     niv = {}
     if isinstance(data, dict):
         for k, campo in (("PW", "put_wall"), ("QF", "gamma_flip"), ("CW", "call_wall")):
@@ -100,21 +110,27 @@ def obtener_niveles(tk, fecha, spot):
     print(f"  GEX-OI {tk}: {niv}")
     return niv
 
+
 def obtener_vol(tk, fecha):
     out = {"iv": None, "ivr": None, "move1d": None}
-    d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/volatility/stats",
-                 {"date": str(fecha)})
+    d = get_json(
+        f"https://api.unusualwhales.com/api/stock/{tk}/volatility/stats",
+        {"date": str(fecha)},
+    )
     if isinstance(d, dict):
         out["iv"] = pct(d.get("iv"))
         out["ivr"] = pct(d.get("iv_rank"))
-    rows = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/interpolated-iv",
-                    {"date": str(fecha)})
+    rows = get_json(
+        f"https://api.unusualwhales.com/api/stock/{tk}/interpolated-iv",
+        {"date": str(fecha)},
+    )
     if isinstance(rows, list):
         for row in rows:
             if int(row.get("days", 0) or 0) in (7, 5, 6):
                 out["move1d"] = pct(row.get("implied_move_perc"))
                 break
     return out
+
 
 def lado(row):
     tags = str(row.get("tags", "")).lower()
@@ -129,14 +145,19 @@ def lado(row):
         return "COMPRA" if p >= (b + a) / 2 else "VENTA"
     return "INDEF"
 
+
 def procesar_trades(data, ticker):
     df = pd.DataFrame(data)
     if df.empty:
         return df
     raw = df["executed_at"] if "executed_at" in df.columns else df.get("created_at")
-    if raw is not None and len(raw) and str(raw.iloc[0]).replace(".", "", 1).isdigit():
-        df["hora"] = pd.to_datetime(pd.to_numeric(raw, errors="coerce"), unit="ms", utc=True, errors="coerce")
-    else:
+    try:
+        s0 = str(raw.iloc[0]) if raw is not None and len(raw) else ""
+        if s0.replace(".", "", 1).isdigit():
+            df["hora"] = pd.to_datetime(pd.to_numeric(raw, errors="coerce"), unit="ms", utc=True, errors="coerce")
+        else:
+            df["hora"] = pd.to_datetime(raw, utc=True, errors="coerce")
+    except Exception:
         df["hora"] = pd.to_datetime(raw, utc=True, errors="coerce")
     df["hora"] = df["hora"].dt.tz_convert(TZ)
     df["premium"] = pd.to_numeric(df.get("premium", 0), errors="coerce").fillna(0)
@@ -165,6 +186,7 @@ def procesar_trades(data, ticker):
     df["dia"] = df["hora"].dt.date
     return df.dropna(subset=["hora"])
 
+
 def tape_dia(fecha, ticker):
     inicio = datetime(fecha.year, fecha.month, fecha.day, 9, 25, tzinfo=TZ).astimezone(ZoneInfo("UTC"))
     fin = datetime(fecha.year, fecha.month, fecha.day, 16, 15, tzinfo=TZ).astimezone(ZoneInfo("UTC"))
@@ -180,6 +202,7 @@ def tape_dia(fecha, ticker):
     time.sleep(0.12)
     return procesar_trades(data, ticker) if data else pd.DataFrame()
 
+
 def precio_diario(grupo):
     px = yf.download(YAHOO[grupo], period="2mo", interval="1d", progress=False, auto_adjust=True)
     if px.empty:
@@ -188,6 +211,7 @@ def precio_diario(grupo):
         px.columns = px.columns.get_level_values(0)
     px.index = pd.to_datetime(px.index)
     return px.tail(DIAS + 2)
+
 
 def senal_swing(px, last, niveles, q5, q15, vol):
     qf, pw, cw = niveles.get("QF"), niveles.get("PW"), niveles.get("CW")
@@ -201,7 +225,7 @@ def senal_swing(px, last, niveles, q5, q15, vol):
         senales.append("SWING_BAJISTA")
     if qf and last >= qf and q5 > 0:
         senales.append("RECLAIM_QF_SWING")
-    if qf and last < qf and last > float(px["Close"].min()):
+    if qf and last < qf:
         senales.append("DEBIL_BAJO_QF")
     if pw and last <= pw * 1.01:
         senales.append("PISO_PW_SWING")
@@ -213,9 +237,9 @@ def senal_swing(px, last, niveles, q5, q15, vol):
         senales.append("PERDIDA_5D")
     ivr = vol.get("ivr")
     if ivr is not None and ivr >= 70:
-        senales.append("IVR_ALTA_vender_premio")
+        senales.append("IVR_ALTA")
     elif ivr is not None and ivr <= 25:
-        senales.append("IVR_BAJA_comprar_premio")
+        senales.append("IVR_BAJA")
     if not senales:
         senales.append("RANGO")
     if "SWING_ALCISTA" in senales or "RECLAIM_QF_SWING" in senales:
@@ -230,11 +254,16 @@ def senal_swing(px, last, niveles, q5, q15, vol):
         sesgo = "SWING NEUTRO / RANGO"
     return sesgo, senales
 
+
 def pintar_nivel(ax, y, nombre, color):
     ax.axhline(y, color=color, ls="--", lw=1.2)
-    ax.text(0.01, y, f"{nombre} {y:.2f}", transform=ax.get_yaxis_transform(),
-            color="white", fontsize=8, fontweight="bold", va="bottom",
-            bbox=dict(fc=color, ec="none", pad=0.25))
+    ax.text(
+        0.01, y, f"{nombre} {y:.2f}",
+        transform=ax.get_yaxis_transform(),
+        color="white", fontsize=8, fontweight="bold", va="bottom",
+        bbox=dict(fc=color, ec="none", pad=0.25),
+    )
+
 
 def grafico_swing(grupo, px, df, niveles, vol):
     if px.empty:
@@ -243,8 +272,9 @@ def grafico_swing(grupo, px, df, niveles, vol):
     bg, fg, grid = "#0b1220", "#e8eef7", "#1d2a3d"
     last = float(px["Close"].iloc[-1])
     umbral = MIN_BURBUJA[grupo]
+
     if df is None or df.empty:
-        q5 = q15 = 0
+        q5 = q15 = 0.0
         grandes = pd.DataFrame()
         diario = pd.Series(dtype=float)
     else:
@@ -252,30 +282,23 @@ def grafico_swing(grupo, px, df, niveles, vol):
         df["dia"] = pd.to_datetime(df["dia"])
         diario = df.groupby(df["dia"].dt.date)["qdelta"].sum()
         ult = sorted(diario.index)[-5:] if len(diario) else []
-        q5 = float(diario.loc[diario.index.isin(ult)].sum()) if ult else 0
+        q5 = float(diario.loc[diario.index.isin(ult)].sum()) if ult else 0.0
         q15 = float(diario.sum())
         grandes = df[df["exposicion"] >= umbral].sort_values("exposicion", ascending=False)
         if grandes.empty:
             grandes = df.nlargest(6, "exposicion")
-    sesgo, senales = senal_swing(px, last, niveles, q5, q15, vol)
-    color = "#2ecc71" if "ALCISTA" in sesgo else "#e74c3c" if "BAJISTA" in sesgo else "#f1c40f"
-    iv = []
-    if vol.get("iv") is not None:
-        iv.append(f"IV {vol['iv']:.1f}%")
-    if vol.get("ivr") is not None:
-        iv.append(f"IVR {vol['ivr']:.0f}")
-    caja = (
-        f"{sesgo}\n"
-        f"{', '.join(senales)}\n"
-        f"qdelta 5d {fmt_usd(q5)} | {DIAS}d {fmt_usd(q15)}\n"
-        f"{grupo} {last:,.2f}   " + "  ".join(iv) +
-        "\nPW/QF de OI = niveles swing | print != direccion"
-    )
-    print(" ", caja.replace("\n", " | "))
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 9), sharex=True,
-                                   gridspec_kw={"height_ratios": [3.2, 1.1]})
-    fig.patch.set_facecolor(bg)
+    sesgo, senales = senal_swing(px, last, niveles, q5, q15, vol)
+    ivtxt = []
+    if vol.get("iv") is not None:
+        ivtxt.append(f"IV {vol['iv']:.1f}%")
+    if vol.get("ivr") is not None:
+        ivtxt.append(f"IVR {vol['ivr']:.0f}")
+
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(13, 7.2), sharex=True,
+        gridspec_kw={"height_ratios": [3.2, 1.1]}, facecolor=bg,
+    )
     for ax in (ax1, ax2):
         ax.set_facecolor(bg)
         ax.grid(True, color=grid)
@@ -284,82 +307,101 @@ def grafico_swing(grupo, px, df, niveles, vol):
             s.set_color(grid)
 
     x = px.index
-    up = px["Close"] >= px["Open"]
-    ax1.bar(x[up], px.loc[up, "High"] - px.loc[up, "Low"], bottom=px.loc[up, "Low"],
-            width=0.6, color="#2ecc71", alpha=0.35)
-    ax1.bar(x[~up], px.loc[~up, "High"] - px.loc[~up, "Low"], bottom=px.loc[~up, "Low"],
-            width=0.6, color="#e74c3c", alpha=0.35)
+    if "Open" in px.columns and "High" in px.columns:
+        up = px["Close"] >= px["Open"]
+        ax1.bar(x[up], px.loc[up, "High"] - px.loc[up, "Low"], bottom=px.loc[up, "Low"],
+                width=0.6, color="#2ecc71", alpha=0.35)
+        ax1.bar(x[~up], px.loc[~up, "High"] - px.loc[~up, "Low"], bottom=px.loc[~up, "Low"],
+                width=0.6, color="#e74c3c", alpha=0.35)
     ax1.plot(x, px["Close"], color="#7eb6ff", lw=1.6)
-    lo, hi = float(px["Low"].min()), float(px["High"].max())
+
+    lo, hi = float(px["Low"].min()) if "Low" in px.columns else float(px["Close"].min()), \
+             float(px["High"].max()) if "High" in px.columns else float(px["Close"].max())
     pad = (hi - lo) * 0.08 or 1
     ax1.set_ylim(lo - pad, hi + pad)
-    ax1.set_title(f"SWING {grupo}  |  {DIAS} sesiones  |  {datetime.now(TZ_COL):%Y-%m-%d %H:%M} COL",
-                  loc="left", color=fg)
-    ax1.text(0.01, 0.03, caja, transform=ax1.transAxes, color=color, fontsize=8,
-             fontweight="bold", va="bottom",
-             bbox=dict(boxstyle="round,pad=0.4", fc=bg, ec=color, alpha=0.93))
-    if "CW" in niveles:
-        pintar_nivel(ax1, niveles["CW"], "CW", "#6c7ae0")
-    if "QF" in niveles:
-        pintar_nivel(ax1, niveles["QF"], "QF", "#1aa3a3")
-    if "PW" in niveles:
-        pintar_nivel(ax1, niveles["PW"], "PW", "#d24b6b")
 
-    top = grandes.head(MAX_ETIQUETAS) if not grandes.empty else grandes
-    ids = set(top.index) if not top.empty else set()
-    for idx, row in (grandes.iterrows() if not grandes.empty else []):
-        xd = pd.Timestamp(row["dia"])
-        y = float(px["Close"].iloc[px.index.get_indexer([xd], method="nearest")[0]])
-        put = row["contrato"] == "PUT"
-        ax1.scatter(xd, y, s=380, facecolors="none", edgecolors="#f1c40f", lw=1.8, zorder=8)
-        ax1.scatter(xd, y, s=48, marker=("v" if put else "^"),
-                    c=("#e74c3c" if put else "#2ecc71"), zorder=9)
-        if idx in ids:
-            ax1.annotate(fmt_usd(row["exposicion"]), (xd, y), textcoords="offset points",
-                         xytext=(0, 10), ha="center", color="#f1c40f", fontsize=8, fontweight="bold")
+    if not grandes.empty:
+        top = grandes.nlargest(MAX_ETIQUETAS, "exposicion")
+        for _, r in grandes.iterrows():
+            col = "#2ecc71" if r["signo"] > 0 else "#e74c3c"
+            mk = "^" if r["signo"] > 0 else "v"
+            ax1.scatter(pd.Timestamp(r["dia"]), r["spot"] or last,
+                        s=50, c=col, marker=mk, zorder=5, alpha=0.85)
+        for _, r in top.iterrows():
+            ax1.annotate(
+                fmt_usd(r["exposicion"]),
+                (pd.Timestamp(r["dia"]), r["spot"] or last),
+                textcoords="offset points", xytext=(4, 8),
+                color=fg, fontsize=7,
+            )
+
+    if niveles.get("PW"):
+        pintar_nivel(ax1, niveles["PW"], "PW", "#e74c3c")
+    if niveles.get("QF"):
+        pintar_nivel(ax1, niveles["QF"], "QF", "#f1c40f")
+    if niveles.get("CW"):
+        pintar_nivel(ax1, niveles["CW"], "CW", "#2ecc71")
 
     if len(diario):
         idx = pd.to_datetime(list(diario.index))
         ax2.bar(idx, diario.values / 1e6,
-                color=["#2ecc71" if v >= 0 else "#e74c3c" for v in diario.values], width=0.6)
-    ax2.axhline(0, color="#888", lw=0.6)
-    ax2.set_ylabel("QDELTA $M / día", color=fg, fontsize=8)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%d-%b"))
-    plt.tight_layout()
-    ruta = os.path.join(CARPETA, f"{grupo}_SWING_{datetime.now():%Y%m%d_%H%M%S}.png")
-    plt.savefig(ruta, dpi=160, facecolor=bg)
-    plt.close()
-    print("Grafico", ruta)
-    with open(os.path.join(CARPETA, "senales_swing.csv"), "a", encoding="utf-8") as f:
-        if f.tell() == 0:
-            f.write("ts,grupo,sesgo,senales,q5,q15,precio,qf,pw,cw\n")
-        f.write(f"{datetime.now(TZ_COL)},{grupo},{sesgo},{'|'.join(senales)},{q5},{q15},{last},"
-                f"{niveles.get('QF','')},{niveles.get('PW','')},{niveles.get('CW','')}\n")
+                color=["#2ecc71" if v >= 0 else "#e74c3c" for v in diario.values],
+                width=0.7, alpha=0.85)
+    ax2.axhline(0, color=fg, lw=0.5)
+    ax2.set_ylabel("qΔ $M", color=fg)
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d"))
+
+    ax1.set_title(
+        f"SWING {grupo}  |  {DIAS} sesiones  |  {sesgo}  |  q5 {fmt_usd(q5)}  q{DIAS} {fmt_usd(q15)}  "
+        + "  ".join(ivtxt),
+        color=fg, loc="left", fontsize=11,
+    )
+    ax1.set_ylabel("Precio", color=fg)
+    fig.text(
+        0.01, 0.01,
+        f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
+        f"{', '.join(senales)}  |  print ≠ dirección ETF",
+        color="#9aa7b8", fontsize=8,
+    )
+    fig.tight_layout()
+    ruta = os.path.join(CARPETA, f"{grupo}_SWING_{datetime.now(TZ):%Y%m%d_%H%M%S}.png")
+    fig.savefig(ruta, dpi=110, bbox_inches="tight", facecolor=bg)
+    plt.close(fig)
+    print("  PNG", ruta)
+    print(" ", sesgo, "|", ", ".join(senales))
+
+
+def procesar_grupo(grupo, ticks, dias):
+    print("==== SWING", grupo)
+    frames = []
+    for d in dias:
+        for tk in ticks:
+            t = tape_dia(d, tk)
+            if t is not None and not t.empty:
+                frames.append(t)
+    df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    px = precio_diario(grupo)
+    last = float(px["Close"].iloc[-1]) if not px.empty else None
+    fecha = dias[-1]
+    niv = {}
+    for tk in ticks:
+        n = obtener_niveles(tk, fecha, last)
+        for k, v in n.items():
+            if k not in niv:
+                niv[k] = v
+    vol = obtener_vol(ticks[0], fecha)
+    grafico_swing(grupo, px, df, niv, vol)
+
 
 def main():
     if not API_KEY:
         print("Falta UW_API_KEY")
         return
     dias = habiles(DIAS)
-    hoy = dias[-1]
-    print("=" * 70)
-    print("MODO SWING | OI GEX | flujo", DIAS, "días")
-    print("Salida:", CARPETA)
-    print("=" * 70)
-    for grupo, tickers in GRUPOS.items():
-        print("Grupo", grupo)
-        px = precio_diario(grupo)
-        spot = float(px["Close"].iloc[-1]) if not px.empty else None
-        partes = []
-        for d in dias[-7:]:
-            for tk in tickers:
-                t = tape_dia(d, tk)
-                if not t.empty:
-                    partes.append(t)
-        df = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame()
-        niveles = obtener_niveles(tickers[0], hoy, spot)
-        vol = obtener_vol(tickers[0], hoy)
-        grafico_swing(grupo, px, df, niveles, vol)
+    print("SWING días", dias[0], "→", dias[-1])
+    for grupo, ticks in GRUPOS.items():
+        procesar_grupo(grupo, ticks, dias)
+
 
 if __name__ == "__main__":
     main()
