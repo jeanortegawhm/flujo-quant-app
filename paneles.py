@@ -1,10 +1,7 @@
 import os, requests, pandas as pd
-from datetime import datetime
-from zoneinfo import ZoneInfo
 
 API = os.getenv("UW_API_KEY", "")
 H = {"Authorization": f"Bearer {API}", "Accept": "application/json"}
-TZ = ZoneInfo("America/New_York")
 
 def get(url, params=None):
     try:
