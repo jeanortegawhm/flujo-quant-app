@@ -31,13 +31,15 @@ YAHOO = {
 
 MIN_BURBUJA = {
     "SPX": 150_000_000, "SPY": 80_000_000, "QQQ": 80_000_000,
-    "IWM": 25_000_000, "IBIT": 5_000_000, "GLD": 40_000_000,
+    "IWM": 25_000_000, "IBIT": 5_000_000, "GLD": 15_000_000,
 }
 
-MIN_PREMIUM = 120_000
+MIN_PREMIUM = int(os.getenv("MIN_PREMIUM", "120000"))
+SOLO_0DTE = os.getenv("SOLO_0DTE", "0") == "1"
+UMBRAL_BURBUJA = float(os.getenv("UMBRAL_BURBUJA", "30000000"))
+
 LIMIT = 180
 MAX_ETIQUETAS = 7
-INTERVALO_MINUTOS = 5
 
 TZ_MERCADO = ZoneInfo("America/New_York")
 TZ_VER = ZoneInfo("America/Bogota")
@@ -46,7 +48,6 @@ os.makedirs(CARPETA, exist_ok=True)
 
 headers = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
 BLOQUES = [(9, 25, 11, 30), (11, 30, 13, 30), (13, 30, 15, 0), (15, 0, 16, 15)]
-LOG_SENALES = os.path.join(CARPETA, "senales.csv")
 
 # ================== UTILS ==================
 def mercado_abierto():
@@ -73,7 +74,8 @@ def num(x):
     try:
         if x is None or x == "": return None
         return float(x)
-    except: return None
+    except:
+        return None
 
 def get_json(url, params=None):
     try:
@@ -87,7 +89,7 @@ def get_json(url, params=None):
         print("  api error:", e)
         return None
 
-# ================== GEX LEVELS (estilo SpotGamma / GEXBot) ==================
+# ================== GEX LEVELS ==================
 def obtener_niveles(ticker, fecha, spot=None):
     niveles = {}
     for source in ["oi", "vol"]:
@@ -98,14 +100,12 @@ def obtener_niveles(ticker, fecha, spot=None):
                              ("QF", "gamma_flip"), ("MAGNET", "gamma_magnet")):
                 v = num(data.get(campo))
                 if v is not None:
+                    if spot and abs(v - spot) / spot > 0.25:
+                        continue
                     niveles[f"{k}_{source.upper()}"] = v
-            if "nearby_flips" in data and data["nearby_flips"]:
-                niveles["nearby"] = data["nearby_flips"]
-    # Preferimos OI para niveles estructurales
     final = {}
     for k in ["CW", "PW", "QF", "MAGNET"]:
         final[k] = niveles.get(f"{k}_OI") or niveles.get(f"{k}_VOL")
-    final["nearby"] = niveles.get("nearby", [])
     print(f"  Niveles {ticker}: {final}")
     return final
 
@@ -118,20 +118,13 @@ def obtener_vol(ticker, fecha):
         if out["iv"] and out["iv"] < 5: out["iv"] *= 100
         out["ivr"] = num(d.get("iv_rank"))
         if out["ivr"] and out["ivr"] < 3: out["ivr"] *= 100
-    rows = get_json(f"https://api.unusualwhales.com/api/stock/{ticker}/interpolated-iv", {"date": str(fecha)})
-    if isinstance(rows, list):
-        for row in rows:
-            if int(row.get("days", 0) or 0) in (1, 0):
-                out["move1d"] = num(row.get("implied_move_perc"))
-                if out["move1d"] and out["move1d"] < 1: out["move1d"] *= 100
-                break
     return out
 
-# ================== NET PREMIUM (estilo ConvexValue) ==================
+# ================== NET PREMIUM ==================
 def obtener_net_premium(ticker, fecha):
     rows = get_json(f"https://api.unusualwhales.com/api/stock/{ticker}/net-prem-ticks", {"date": str(fecha)})
     if not isinstance(rows, list) or not rows:
-        return {"net_call": 0, "net_put": 0, "flow_ratio": 0, "serie": pd.Series(dtype=float)}
+        return {"net_call": 0, "net_put": 0, "flow_ratio": 1.0, "serie": pd.Series(dtype=float)}
     df = pd.DataFrame(rows)
     df["hora"] = pd.to_datetime(df.get("tape_time"), utc=True, errors="coerce").dt.tz_convert(TZ_MERCADO)
     df["net_call"] = pd.to_numeric(df.get("net_call_premium", 0), errors="coerce").fillna(0)
@@ -139,7 +132,6 @@ def obtener_net_premium(ticker, fecha):
     df["agres"] = df["net_call"] - df["net_put"]
     total_call = df["net_call"].sum()
     total_put = df["net_put"].sum()
-    # Flow Ratio estilo ConvexValue: bullish / bearish
     bullish = max(total_call, 0) + max(-total_put, 0)
     bearish = max(-total_call, 0) + max(total_put, 0)
     ratio = bullish / bearish if bearish > 0 else (2.0 if bullish > 0 else 1.0)
@@ -173,12 +165,33 @@ def procesar_df(data, ticker):
     df["delta"] = pd.to_numeric(df.get("delta", 0), errors="coerce").fillna(0)
     df["size"] = pd.to_numeric(df.get("size", 0), errors="coerce").fillna(0)
     df["spot"] = pd.to_numeric(df.get("underlying_price", 0), errors="coerce").fillna(0)
+
+    # Fecha de vencimiento para filtro 0DTE/1DTE
+    if "expiry" in df.columns:
+        df["expiry"] = pd.to_datetime(df["expiry"], errors="coerce").dt.date
+    elif "option_symbol" in df.columns:
+        # Intentar extraer expiry del símbolo (formato OCC)
+        def extract_expiry(sym):
+            try:
+                s = str(sym)
+                # Buscar 6 dígitos de fecha YYMMDD
+                for i in range(len(s)-5):
+                    if s[i:i+6].isdigit():
+                        return datetime.strptime(s[i:i+6], "%y%m%d").date()
+            except:
+                return None
+            return None
+        df["expiry"] = df["option_symbol"].apply(extract_expiry)
+    else:
+        df["expiry"] = None
+
     if "option_type" not in df.columns:
         df["option_type"] = df.get("option_symbol", "").astype(str).apply(
             lambda x: "call" if "C" in str(x)[-9:] else "put")
     df["option_type"] = df["option_type"].astype(str).str.lower()
     df["lado"] = df.apply(lado_trade, axis=1)
     df["contrato"] = np.where(df["option_type"].str.contains("call"), "CALL", "PUT")
+
     signo = []
     for _, r in df.iterrows():
         if r["lado"] == "COMPRA" and r["contrato"] == "CALL": signo.append(1)
@@ -209,8 +222,20 @@ def obtener_tape(fecha, ticker):
         print(f"  {ticker} {h1:02d}:{m1:02d}-{h2:02d}:{m2:02d}: {len(data)}")
         partes.extend(data)
         time.sleep(0.12)
-    if not partes: return pd.DataFrame()
-    return procesar_df(partes, ticker).drop_duplicates(subset=["hora", "premium", "size"]).sort_values("hora")
+    if not partes:
+        return pd.DataFrame()
+
+    df = procesar_df(partes, ticker).drop_duplicates(subset=["hora", "premium", "size"]).sort_values("hora")
+
+    # ===== FILTRO 0DTE / 1DTE =====
+    if SOLO_0DTE and not df.empty and "expiry" in df.columns:
+        hoy = fecha
+        manana = hoy + timedelta(days=1)
+        # Solo contratos que vencen hoy o mañana
+        df = df[df["expiry"].isin([hoy, manana])]
+        print(f"  → Después de filtro 0DTE/1DTE: {len(df)} trades")
+
+    return df
 
 def cargar_precio(grupo, fecha):
     px = yf.download(YAHOO.get(grupo, grupo), period="7d", interval="1m", progress=False, auto_adjust=True)
@@ -230,7 +255,12 @@ def leer_senales(last, px_c, niveles, qdelta, expo, grandes, flow_ratio):
     pw = niveles.get("PW")
     cw = niveles.get("CW")
     neto = float(qdelta.sum()) if len(qdelta) else 0.0
-    q30 = float(qdelta[qdelta.index >= qdelta.index.max() - pd.Timedelta(minutes=30)].sum()) if len(qdelta) > 0 else 0.0
+
+    if len(qdelta) > 0 and isinstance(qdelta.index, pd.DatetimeIndex):
+        q30 = float(qdelta[qdelta.index >= qdelta.index.max() - pd.Timedelta(minutes=30)].sum())
+    else:
+        q30 = 0.0
+
     senales = []
     if qf and last < qf and q30 < 0: senales.append("FLUSH")
     if pw and last <= pw * 1.004: senales.append("PISO_PW")
@@ -248,26 +278,21 @@ def leer_senales(last, px_c, niveles, qdelta, expo, grandes, flow_ratio):
         sesgo = "NEUTRO / RANGO"
     return sesgo, senales, neto, q30
 
-# ================== GRÁFICO INSTITUCIONAL ==================
+# ================== GRÁFICO MEJORADO ==================
 def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     px = cargar_precio(grupo, fecha)
     if px.empty:
         print("  sin precio", grupo)
         return
 
-    # Colores institucionales
-    bg      = "#0b1220"
-    fg      = "#e8eef7"
-    grid    = "#1d2a3d"
-    linea   = "#7eb6ff"
-    gold    = "#f1c40f"
-    green   = "#2ecc71"
-    red     = "#e74c3c"
-    purple  = "#6c7ae0"
-    teal    = "#1aa3a3"
-    pink    = "#d24b6b"
+    bg, fg, grid, linea = "#0b1220", "#e8eef7", "#1d2a3d", "#7eb6ff"
+    gold, green, red = "#f1c40f", "#2ecc71", "#e74c3c"
+    purple, teal, pink = "#6c7ae0", "#1aa3a3", "#d24b6b"
 
     umbral = MIN_BURBUJA.get(grupo, 30_000_000)
+    if UMBRAL_BURBUJA > 0:
+        umbral = UMBRAL_BURBUJA
+
     px_c = px.copy()
     px_c.index = px_c.index.tz_convert(TZ_VER)
     last = float(px_c["Close"].iloc[-1])
@@ -282,11 +307,9 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
         if grandes.empty:
             grandes = g.nlargest(6, "exposicion")
         top = grandes.head(MAX_ETIQUETAS)
-        max_exp = g["exposicion"].max()
     else:
         expo = qdelta = pd.Series(dtype=float)
         grandes = top = g
-        max_exp = 0
 
     agres = net_prem.get("serie", pd.Series(dtype=float))
     flow_ratio = net_prem.get("flow_ratio", 1.0)
@@ -295,7 +318,6 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     color_s = green if "ALCISTA" in sesgo else red if "BAJISTA" in sesgo else gold
     regimen = "POSITIVE GEX" if (niveles.get("QF") and last > niveles["QF"]) else "NEGATIVE GEX"
 
-    # Caja de información (estilo Quantium)
     caja = (
         f"{sesgo}  |  {regimen}\n"
         f"{last_t.strftime('%H:%M')} COL  ·  {grupo} {last:,.2f}\n"
@@ -305,7 +327,6 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     )
     print(" ", caja.replace("\n", " | "))
 
-    # ========== FIGURA ==========
     fig, axs = plt.subplots(4, 1, figsize=(15, 12), sharex=True,
                             gridspec_kw={"height_ratios": [3.6, 0.9, 1.1, 0.9]})
     fig.patch.set_facecolor(bg)
@@ -318,21 +339,17 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
         for spine in ax.spines.values():
             spine.set_color(grid)
 
-    # ----- PRECIO -----
     ax1.plot(px_c.index, px_c["Close"], color=linea, lw=1.7, zorder=3)
     lo, hi = float(px_c["Close"].min()), float(px_c["Close"].max())
     pad = (hi - lo) * 0.12 or 1
     ax1.set_ylim(lo - pad, hi + pad)
-
     ax1.set_title(f"{grupo}  |  Flujo Inusual  |  {etiqueta} {fecha}",
                   loc="left", color=fg, fontsize=13, fontweight="bold", pad=10)
 
-    # Caja de info
     ax1.text(0.01, 0.97, caja, transform=ax1.transAxes, color=color_s,
              fontsize=8.5, fontweight="bold", va="top",
              bbox=dict(boxstyle="round,pad=0.45", fc=bg, ec=color_s, alpha=0.92), zorder=20)
 
-    # Niveles
     for k, color, ls in [("CW", purple, "--"), ("QF", teal, "-."), ("PW", pink, "--"), ("MAGNET", gold, ":")]:
         if niveles.get(k):
             y = niveles[k]
@@ -341,7 +358,6 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
                      va="center", ha="left", fontsize=8, color="white", fontweight="bold",
                      bbox=dict(fc=color, ec="none", pad=0.3), zorder=15)
 
-    # Marcadores de flujo grande (estilo Quantium)
     for idx, row in (grandes.iterrows() if not grandes.empty else []):
         i = px.index.get_indexer([row["hora"]], method="nearest")[0]
         x = px_c.index[i]
@@ -349,12 +365,8 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
         put = row["contrato"] == "PUT"
         size = 180 + min(row["exposicion"] / 80000, 420)
 
-        # Anillo dorado exterior
-        ax1.scatter(x, y, s=size + 90, facecolors="none", edgecolors=gold,
-                    linewidths=2.0, zorder=8, alpha=0.95)
-        # Punto central
+        ax1.scatter(x, y, s=size + 90, facecolors="none", edgecolors=gold, linewidths=2.0, zorder=8)
         ax1.scatter(x, y, s=38, c=gold, zorder=9)
-        # Triángulo dirección
         ax1.scatter(x, y, s=55, marker=("v" if put else "^"),
                     c=(red if put else green), zorder=10, edgecolors="black", linewidths=0.6)
 
@@ -363,10 +375,8 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
                          xy=(x, y), xytext=(0, 14 if not put else -16),
                          textcoords="offset points", ha="center",
                          color=gold, fontsize=8.5, fontweight="bold",
-                         bbox=dict(boxstyle="round,pad=0.2", fc=bg, ec=gold, alpha=0.85),
-                         zorder=12)
+                         bbox=dict(boxstyle="round,pad=0.2", fc=bg, ec=gold, alpha=0.85), zorder=12)
 
-    # ----- AGRESOR / NET PREMIUM -----
     if len(agres):
         vals = agres.values / 1e6
         colors = [green if v >= 0 else red for v in vals]
@@ -374,19 +384,16 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     axA.axhline(0, color="#666", lw=0.7)
     axA.set_ylabel("NET PREM $M", fontsize=8, color=fg)
 
-    # ----- TOTAL EXPOSICIÓN -----
     if len(expo):
         vals = expo.values / 1e6
         colors = [gold if v >= umbral/1e6 else "#3d4f66" for v in vals]
         axT.bar(expo.index, vals, width=0.00065, color=colors, alpha=0.9)
-        # Etiquetas de los más grandes
         for t, v in expo.nlargest(4).items():
             if v >= umbral:
                 axT.text(t, v/1e6, fmt_usd(v), ha="center", va="bottom",
                          color=gold, fontsize=7.5, fontweight="bold")
     axT.set_ylabel("TOTAL $M", fontsize=8, color=fg)
 
-    # ----- Q-DELTA -----
     if len(qdelta):
         vals = qdelta.values / 1e6
         colors = [green if v >= 0 else red for v in vals]
@@ -410,9 +417,11 @@ def procesar(fecha, etiqueta):
         partes = []
         for tk in tickers:
             df = obtener_tape(fecha, tk)
-            if not df.empty: partes.append(df)
+            if not df.empty:
+                partes.append(df)
         df = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame()
-        if not df.empty: frames.append(df)
+        if not df.empty:
+            frames.append(df)
 
         px = cargar_precio(grupo, fecha)
         spot = float(px["Close"].iloc[-1]) if not px.empty else None
