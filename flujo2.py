@@ -98,48 +98,50 @@ def niveles(tk, fecha, spot=None):
             continue
         for k, c in (("CW","call_wall"),("PW","put_wall"),("QF","gamma_flip"),("MAGNET","gamma_magnet")):
             v = num(d.get(c))
-            if v is None:
-                continue
-            raw[f"{k}_{src.upper()}"] = v
+            if v is not None:
+                raw[f"{k}_{src.upper()}"] = v
     return {k: raw.get(f"{k}_OI") or raw.get(f"{k}_VOL") for k in ("CW","PW","QF","MAGNET")}
 
 def gex_por_strike(tk, fecha, spot):
-    candidatos = [
-        (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures", {"date": str(fecha)}),
-        (f"https://api.unusualwhales.com/api/stock/{tk}/gex", {"date": str(fecha)}),
-        (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure", {"date": str(fecha)}),
+    params = {"date": str(fecha)}
+    if spot:
+        params["min_strike"] = round(spot * 0.97, 2)
+        params["max_strike"] = round(spot * 1.03, 2)
+    urls = [
+        f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike",
+        f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure/strike",
+        f"https://api.unusualwhales.com/api/stock/{tk}/flow-per-strike",
     ]
-    rows = None
-    for url, params in candidatos:
+    rows, usado = None, ""
+    for url in urls:
         data = get_json(url, params)
         if isinstance(data, list) and data:
-            rows = data; break
-        if isinstance(data, dict):
-            for k in ("data", "gex", "exposures", "strikes"):
-                if isinstance(data.get(k), list) and data.get(k):
-                    rows = data[k]; break
-        if rows:
+            rows, usado = data, url.split("/")[-1]
             break
     if not rows:
+        print("  GEX strike vacío", tk)
         return pd.DataFrame()
+    print("  GEX strike", tk, usado, len(rows))
     df = pd.DataFrame(rows)
     col_k = next((c for c in ("strike", "strike_price", "k") if c in df.columns), None)
     if not col_k:
         return pd.DataFrame()
     df["strike"] = pd.to_numeric(df[col_k], errors="coerce")
-    gcol = next((c for c in ("gex", "gamma", "net_gex", "dex") if c in df.columns), None)
-    pcol = next((c for c in ("put_gex", "put_gamma") if c in df.columns), None)
-    ccol = next((c for c in ("call_gex", "call_gamma") if c in df.columns), None)
-    if gcol:
-        df["gex"] = pd.to_numeric(df[gcol], errors="coerce").fillna(0)
-    elif ccol or pcol:
-        df["gex"] = pd.to_numeric(df.get(ccol, 0), errors="coerce").fillna(0) - \
-                    pd.to_numeric(df.get(pcol, 0), errors="coerce").fillna(0).abs()
+    cgi = pd.to_numeric(df.get("call_gamma_oi", df.get("call_gex", 0)), errors="coerce").fillna(0)
+    pgi = pd.to_numeric(df.get("put_gamma_oi", df.get("put_gex", 0)), errors="coerce").fillna(0)
+    if (cgi.abs() + pgi.abs()).sum() > 0:
+        df["gex"] = cgi + pgi
+    elif "call_premium" in df.columns:
+        df["gex"] = pd.to_numeric(df["call_premium"], errors="coerce").fillna(0) - \
+                    pd.to_numeric(df.get("put_premium", 0), errors="coerce").fillna(0)
     else:
-        return pd.DataFrame()
+        gcol = next((c for c in ("gex", "gamma", "net_gex") if c in df.columns), None)
+        if not gcol:
+            return pd.DataFrame()
+        df["gex"] = pd.to_numeric(df[gcol], errors="coerce").fillna(0)
     df = df.dropna(subset=["strike"])
     if spot:
-        df = df[abs(df["strike"] - spot) / max(abs(spot), 1) <= 0.025]
+        df = df[abs(df["strike"] - spot) / max(abs(spot), 1) <= 0.03]
     return df.sort_values("strike")
 
 def vol_stats(tk, fecha):
@@ -181,6 +183,17 @@ def lado(row):
         return "COMPRA" if p >= (b + a) / 2 else "VENTA"
     return "INDEF"
 
+def recalcular_expo(df, spot=None):
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    if spot:
+        df.loc[df["spot"] <= 0, "spot"] = spot
+    expo = df["delta"].abs() * df["size"] * 100 * df["spot"].clip(lower=0)
+    df["exposicion"] = np.where(expo > 0, expo, df["premium"].clip(lower=0))
+    df["qdelta"] = df["signo"] * df["delta"].abs() * df["size"] * 100
+    return df
+
 def procesar_df(data, ticker):
     df = pd.DataFrame(data)
     if df.empty:
@@ -218,12 +231,10 @@ def procesar_df(data, ticker):
         else:
             sg.append(0)
     df["signo"] = sg
-    df["qdelta"] = df["signo"] * df["delta"].abs() * df["size"] * 100
-    df["exposicion"] = df["delta"].abs() * df["size"] * 100 * df["spot"].clip(lower=0)
     df["origen"] = ticker
     df = df.dropna(subset=["hora"])
-    df = df[(df["premium"] > 0) & (df["exposicion"] >= 1_000_000)]
-    return df
+    df = df[df["premium"] > 0]
+    return recalcular_expo(df)
 
 def tape(fecha, ticker):
     out = []
@@ -374,8 +385,11 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, gex_df):
         axG.axvline(last, color="#6ea8ff", ls="--", lw=1)
         axG.set_xlabel("Strike", color=fg, fontsize=8)
     else:
-        axG.text(0.5, 0.5, "GEX strike no disponible en este plan/API",
-                 transform=axG.transAxes, ha="center", color="#8b9bb0", fontsize=8)
+        axG.set_xlim(lo, hi)
+        axG.set_xticks([])
+        axG.text(0.5, 0.5, "Sin GEX/strike (plan o ticker)",
+                 transform=axG.transAxes, ha="center", va="center",
+                 color="#8b9bb0", fontsize=8)
     axG.set_ylabel("GEX strike", color=fg, fontsize=7)
 
     ratio = float(net.get("flow_ratio", 1) or 1)
@@ -414,6 +428,7 @@ def procesar(fecha, etiqueta, resumen):
         df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         px = precio(grupo, fecha)
         spot = float(px["Close"].iloc[-1]) if not px.empty else None
+        df = recalcular_expo(df, spot)
         niv, gex = {}, pd.DataFrame()
         for tk in ticks:
             for k, v in niveles(tk, fecha, spot).items():
