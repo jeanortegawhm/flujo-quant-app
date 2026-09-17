@@ -75,7 +75,6 @@ tab1, tab2, tab3 = st.tabs(["Intradía", "Swing", "Resultados"])
 with tab1:
     st.subheader("Tape + GEX + Net Premium + Señales")
 
-    # ===== FILTROS AVANZADOS =====
     with st.expander("Filtros Avanzados", expanded=False):
         colf1, colf2, colf3 = st.columns(3)
         with colf1:
@@ -100,18 +99,18 @@ with tab1:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("Solo AYER", width="stretch"):
+        if st.button("Solo AYER", use_container_width=True):
             correr("flujo2.py", "AYER")
     with c2:
-        if st.button("AYER + HOY", type="primary", width="stretch"):
+        if st.button("AYER + HOY", type="primary", use_container_width=True):
             correr("flujo2.py", "AMBOS")
     with c3:
-        if st.button("Solo HOY", width="stretch"):
+        if st.button("Solo HOY", use_container_width=True):
             correr("flujo2.py", "HOY")
 
 with tab2:
     st.subheader("Modo Swing")
-    if st.button("Generar Swing", width="stretch"):
+    if st.button("Generar Swing", use_container_width=True):
         if (HOME / "flujo_swing.py").exists():
             correr("flujo_swing.py", "AMBOS")
         else:
@@ -123,8 +122,11 @@ with tab3:
     if not pngs:
         st.info("Aún no hay gráficos. Genera primero desde Intradía.")
     else:
-        for p in pngs[:15]:
-            st.image(str(p), caption=p.name, width="stretch")
+        for p in pngs[:8]:
+            try:
+                st.image(str(p), caption=p.name, use_container_width=True)
+            except Exception as e:
+                st.warning(f"No se pudo mostrar {p.name}: {e}")
 
 st.markdown("---")
 st.caption("Uso personal / pocos usuarios. No publiques el link ni la API key.")
