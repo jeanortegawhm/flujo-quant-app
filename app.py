@@ -4,6 +4,9 @@ import subprocess
 import sys
 import os
 from pathlib import Path
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from streamlit_autorefresh import st_autorefresh
 HOME = Path(__file__).resolve().parent
 CARPETA = HOME / "flujos"
 CARPETA.mkdir(exist_ok=True)
@@ -19,19 +22,20 @@ st.caption("Intradía (Quantium) + Swing (OI / 15 sesiones)")
 
 tab1, tab2, tab3 = st.tabs(["Intradía", "Swing", "Resultados"])
 
-def correr(nombre):
+def correr(nombre, modo="AMBOS"):
     script = HOME / nombre
     if not script.exists():
         st.error(f"No encuentro {script}")
         return
     caja = st.empty()
-    caja.info(f"Ejecutando {nombre}… puede tardar 1–3 minutos")
+    caja.info(f"Ejecutando {nombre} ({modo})…")
     env = os.environ.copy()
     try:
         env["UW_API_KEY"] = st.secrets.get("UW_API_KEY", env.get("UW_API_KEY", ""))
     except Exception:
         pass
     env["FLUJOS_DIR"] = str(HOME / "flujos")
+    env["MODO_FLUJO"] = modo
     p = subprocess.run(
         [sys.executable, "-u", str(script)],
         capture_output=True,
@@ -51,11 +55,25 @@ def correr(nombre):
 
 with tab1:
     st.subheader("Tape + GEX + Q-delta + señales del día")
-    st.write("Usa flujo2.py. Genera AYER y HOY.")
-    st.warning("Si se queda en bucle, en PowerShell pulsa Ctrl+C.")
-    if st.button("Generar intradía", type="primary"):
-        correr("flujo2.py")
-
+    ny = datetime.now(ZoneInfo("America/New_York"))
+    abierto = ny.weekday() < 5 and (
+        ny.replace(hour=9, minute=30, second=0, microsecond=0)
+        <= ny
+        <= ny.replace(hour=16, minute=0, second=0, microsecond=0)
+    )
+    st.caption(f"NY {ny:%Y-%m-%d %H:%M:%S}  |  {'ABIERTO' if abierto else 'CERRADO'}")
+    auto = st.checkbox("En vivo cada 3 minutos (solo HOY)")
+    if auto:
+        if not abierto:
+            st.warning("Mercado cerrado. El vivo solo corre 9:30–16:00 NY.")
+        else:
+            st_autorefresh(interval=180_000, key="vivo")
+            st.info("Vivo activo. Deja esta pestaña abierta. Cada 3 min corre HOY.")
+            correr("flujo2.py", "HOY")
+    if st.button("Generar intradía AYER + HOY", type="primary"):
+        correr("flujo2.py", "AMBOS")
+    if st.button("Generar solo HOY"):
+        correr("flujo2.py", "HOY")
 with tab2:
     st.subheader("15 sesiones + PW/QF de OI")
     st.write("Usa flujo_swing.py.")

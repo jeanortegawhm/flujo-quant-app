@@ -515,10 +515,17 @@ def main():
     print("QUANTIUM + SEÑALES | GEX | IV | TAPE")
     print("Salida:", CARPETA)
     print("=" * 70)
+    modo = os.getenv("MODO_FLUJO", "AMBOS")
     ayer = dia_habil_anterior()
     hoy = datetime.now(TZ_MERCADO).date()
-    procesar(ayer, "AYER")
-    procesar(hoy, "HOY")
+    print("MODO:", modo)
+    if modo == "HOY":
+        procesar(hoy, "HOY")
+    elif modo == "AYER":
+        procesar(ayer, "AYER")
+    else:
+        procesar(ayer, "AYER")
+        procesar(hoy, "HOY")
 
 if __name__ == "__main__":
     main()
