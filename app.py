@@ -14,13 +14,12 @@ HOME = Path(__file__).resolve().parent
 CARPETA = HOME / "flujos"
 CARPETA.mkdir(exist_ok=True)
 
-# ---------- Estilo dark institucional ----------
 st.markdown("""
 <style>
     .stApp { background-color: #0b1220; color: #e8eef7; }
     .stButton>button { background-color: #1a2332; color: #e8eef7; border: 1px solid #2d3a4f; }
     .stButton>button:hover { border-color: #7eb6ff; }
-    div[data-testid="stMetricValue"] { font-size: 1.4rem; }
+    div[data-testid="stMetricValue"] { font-size: 1.3rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -38,6 +37,10 @@ def correr(nombre, modo="AMBOS"):
         pass
     env["FLUJOS_DIR"] = str(CARPETA)
     env["MODO_FLUJO"] = modo
+    env["MIN_PREMIUM"] = os.environ.get("MIN_PREMIUM", "120000")
+    env["SOLO_0DTE"] = os.environ.get("SOLO_0DTE", "0")
+    env["UMBRAL_BURBUJA"] = os.environ.get("UMBRAL_BURBUJA", "30000000")
+
     p = subprocess.run(
         [sys.executable, "-u", str(script)],
         capture_output=True, text=True, cwd=str(HOME), env=env
@@ -52,9 +55,9 @@ def correr(nombre, modo="AMBOS"):
     if p.stderr:
         st.text_area("Avisos", p.stderr[-2000:], height=120)
 
-# ---------- Header ----------
+# Header
 st.title("Flujo Quant · Terminal Institucional")
-st.caption("GEX · Net Premium · Q-Delta · Unusual Flow  |  Estilo Quantium / SpotGamma / ConvexValue")
+st.caption("GEX · Net Premium · Q-Delta · Unusual Flow")
 
 ny = datetime.now(ZoneInfo("America/New_York"))
 abierto = ny.weekday() < 5 and (
@@ -65,12 +68,11 @@ abierto = ny.weekday() < 5 and (
 col1, col2, col3 = st.columns(3)
 col1.metric("Nueva York", ny.strftime("%H:%M:%S"))
 col2.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
-col3.metric("Zona", "Colombia " + datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
+col3.metric("Colombia", datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
 
 tab1, tab2, tab3 = st.tabs(["Intradía", "Swing", "Resultados"])
 
 with tab1:
-    
     st.subheader("Tape + GEX + Net Premium + Señales")
 
     # ===== FILTROS AVANZADOS =====
@@ -83,7 +85,6 @@ with tab1:
         with colf3:
             umbral_burbuja = st.number_input("Umbral burbuja ($M)", min_value=5, max_value=500, value=30, step=5)
 
-    # Guardamos los filtros en variables de entorno para el script
     os.environ["MIN_PREMIUM"] = str(min_premium)
     os.environ["SOLO_0DTE"] = "1" if solo_0dte else "0"
     os.environ["UMBRAL_BURBUJA"] = str(umbral_burbuja * 1_000_000)
@@ -99,21 +100,22 @@ with tab1:
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        if st.button("Solo AYER", use_container_width=True):
+        if st.button("Solo AYER", width="stretch"):
             correr("flujo2.py", "AYER")
     with c2:
-        if st.button("AYER + HOY", type="primary", use_container_width=True):
+        if st.button("AYER + HOY", type="primary", width="stretch"):
             correr("flujo2.py", "AMBOS")
     with c3:
-        if st.button("Solo HOY", use_container_width=True):
+        if st.button("Solo HOY", width="stretch"):
             correr("flujo2.py", "HOY")
+
 with tab2:
-    st.subheader("Modo Swing (próximamente mejorado)")
-    if st.button("Generar Swing"):
+    st.subheader("Modo Swing")
+    if st.button("Generar Swing", width="stretch"):
         if (HOME / "flujo_swing.py").exists():
             correr("flujo_swing.py", "AMBOS")
         else:
-            st.warning("flujo_swing.py no encontrado")
+            st.warning("flujo_swing.py no encontrado todavía")
 
 with tab3:
     st.subheader("Gráficos generados")
@@ -121,8 +123,8 @@ with tab3:
     if not pngs:
         st.info("Aún no hay gráficos. Genera primero desde Intradía.")
     else:
-        for p in pngs[:12]:
-            st.image(str(p), caption=p.name, use_container_width=True)
+        for p in pngs[:15]:
+            st.image(str(p), caption=p.name, width="stretch")
 
 st.markdown("---")
 st.caption("Uso personal / pocos usuarios. No publiques el link ni la API key.")
