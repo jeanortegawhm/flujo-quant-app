@@ -1,4 +1,4 @@
-import os, sys, json, subprocess
+  import os, sys, json, subprocess
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -16,6 +16,19 @@ def secreto(n, d=""):
     except Exception:
         return os.getenv(n, d)
 
+def fmt_num(x, dec=0):
+    try:
+        x = float(x)
+    except Exception:
+        return "—"
+    if abs(x) >= 1e9:
+        return f"${x/1e9:.2f}B"
+    if abs(x) >= 1e6:
+        return f"${x/1e6:.1f}M"
+    if abs(x) >= 1000:
+        return f"${x:,.0f}"
+    return f"{x:.{dec}f}"
+
 if st.sidebar.text_input("Clave", type="password") != secreto("APP_PASSWORD", "cambiaesta"):
     st.stop()
 
@@ -24,6 +37,7 @@ franja_alto = st.sidebar.slider("Alto de la franja", 0.20, 1.20, 0.45, 0.02)
 franja_min = st.sidebar.slider("Ancho bloque (min)", 1, 5, 1, 1)
 fig_ancho = st.sidebar.slider("Ancho del gráfico", 10.0, 16.0, 12.4, 0.2)
 fig_alto = st.sidebar.slider("Alto del gráfico", 10.0, 16.0, 14.0, 0.2)
+st.sidebar.caption("Cambia sliders y luego pulsa AYER / HOY. Los PNG viejos no se actualizan solos.")
 
 def correr(nombre, modo):
     script = HOME / nombre
@@ -46,14 +60,16 @@ def correr(nombre, modo):
     env["FRANJA_MIN"] = str(franja_min)
     env["FIG_ANCHO"] = str(fig_ancho)
     env["FIG_ALTO"] = str(fig_alto)
-    p = subprocess.run([sys.executable, "-u", str(script)],
-                       capture_output=True, text=True, cwd=str(HOME), env=env)
+    p = subprocess.run(
+        [sys.executable, "-u", str(script)],
+        capture_output=True, text=True, cwd=str(HOME), env=env,
+    )
     box.empty()
     st.success("Listo") if p.returncode == 0 else st.error("Error")
     if p.stdout:
-        st.text_area("Salida", p.stdout[-3500:], height=150)
+        st.text_area("Salida", p.stdout[-3500:], height=160)
     if p.stderr:
-        st.text_area("Avisos", p.stderr[-1000:], height=80)
+        st.text_area("Avisos", p.stderr[-1200:], height=90)
 
 st.title("Flujo Quant")
 ny = datetime.now(ZoneInfo("America/New_York"))
@@ -65,6 +81,7 @@ c.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
 d.metric("Franja", f"{franja_alto:.2f} / {franja_min}m")
 
 t1, t2, t3 = st.tabs(["Intradía", "Swing", "Dashboard"])
+
 with t1:
     f1, f2, f3, f4 = st.columns(4)
     min_p = f1.number_input("Prima mín $", 50000, 3000000, 120000, 10000)
@@ -98,17 +115,33 @@ with t2:
             st.warning("Falta flujo_swing.py")
 
 with t3:
+    st.caption("P1 = GEX/posicionamiento · P2 = flujo 30 min · P3 = vol / implied move. Señal solo con 2/3.")
     res = CARPETA / "resumen.json"
     if res.exists():
-        data = json.loads(res.read_text())
+        try:
+            data = json.loads(res.read_text())
+        except Exception:
+            data = []
         cols = st.columns(3)
         for i, row in enumerate(data[-12:]):
             with cols[i % 3]:
-                st.markdown(f"**{row.get('ticker')} {row.get('modo')}**")
-                st.caption(f"{row.get('regimen')} {row.get('sesgo')}")
+                st.markdown(f"**{row.get('color', '')} {row.get('ticker')} {row.get('modo')}**")
+                st.caption(row.get("semaforo", "—"))
+                st.write(f"P1 {row.get('p1')} · P2 {row.get('p2')} · P3 {row.get('p3')}")
                 st.write(f"CW {row.get('cw') or '—'} · PW {row.get('pw') or '—'} · QF {row.get('qf') or '—'}")
+                st.write(f"qΔ {fmt_num(row.get('qdelta'))} · 30m {fmt_num(row.get('qd30'))}")
+                ivp = row.get("ivp")
+                ivr = row.get("ivr")
+                im = row.get("imp_move_pct")
+                ivp_txt = f"{float(ivp):.0f}" if ivp is not None else "—"
+                ivr_txt = f"{float(ivr):.0f}" if ivr is not None else "—"
+                im_txt = f"{float(im)*100:.2f}%" if im else "—"
+                st.write(f"IVP {ivp_txt} · IVR {ivr_txt} · IM {im_txt}")
                 st.write(f"flow {float(row.get('flow_ratio') or 0):.2f}")
+    else:
+        st.info("Aún no hay resumen.json. Corre Solo AYER o Solo HOY.")
+
     pngs = sorted(CARPETA.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in pngs[:6]:
+    for p in pngs[:8]:
         if p.stat().st_size <= 3_500_000:
             st.image(str(p), caption=p.name, width="stretch")
