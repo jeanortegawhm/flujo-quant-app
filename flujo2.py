@@ -230,7 +230,7 @@ def leer_senales(last, px_c, niveles, qdelta, expo, grandes, flow_ratio):
     pw = niveles.get("PW")
     cw = niveles.get("CW")
     neto = float(qdelta.sum()) if len(qdelta) else 0.0
-    q30 = float(qdelta.last("30min").sum()) if len(qdelta) else 0.0
+    q30 = float(qdelta[qdelta.index >= qdelta.index.max() - pd.Timedelta(minutes=30)].sum()) if len(qdelta) > 0 else 0.0
     senales = []
     if qf and last < qf and q30 < 0: senales.append("FLUSH")
     if pw and last <= pw * 1.004: senales.append("PISO_PW")
