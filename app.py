@@ -70,7 +70,24 @@ col3.metric("Zona", "Colombia " + datetime.now(ZoneInfo("America/Bogota")).strft
 tab1, tab2, tab3 = st.tabs(["Intradía", "Swing", "Resultados"])
 
 with tab1:
+    
     st.subheader("Tape + GEX + Net Premium + Señales")
+
+    # ===== FILTROS AVANZADOS =====
+    with st.expander("Filtros Avanzados", expanded=False):
+        colf1, colf2, colf3 = st.columns(3)
+        with colf1:
+            min_premium = st.number_input("Prima mínima ($)", min_value=50000, max_value=2000000, value=120000, step=10000)
+        with colf2:
+            solo_0dte = st.checkbox("Solo 0DTE / 1DTE", value=False)
+        with colf3:
+            umbral_burbuja = st.number_input("Umbral burbuja ($M)", min_value=5, max_value=500, value=30, step=5)
+
+    # Guardamos los filtros en variables de entorno para el script
+    os.environ["MIN_PREMIUM"] = str(min_premium)
+    os.environ["SOLO_0DTE"] = "1" if solo_0dte else "0"
+    os.environ["UMBRAL_BURBUJA"] = str(umbral_burbuja * 1_000_000)
+
     auto = st.checkbox("En vivo cada 3 minutos (solo HOY)", value=False)
     if auto:
         if not abierto:
@@ -90,7 +107,6 @@ with tab1:
     with c3:
         if st.button("Solo HOY", use_container_width=True):
             correr("flujo2.py", "HOY")
-
 with tab2:
     st.subheader("Modo Swing (próximamente mejorado)")
     if st.button("Generar Swing"):
