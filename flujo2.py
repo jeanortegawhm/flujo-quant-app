@@ -166,15 +166,12 @@ def procesar_df(data, ticker):
     df["size"] = pd.to_numeric(df.get("size", 0), errors="coerce").fillna(0)
     df["spot"] = pd.to_numeric(df.get("underlying_price", 0), errors="coerce").fillna(0)
 
-    # Fecha de vencimiento para filtro 0DTE/1DTE
     if "expiry" in df.columns:
         df["expiry"] = pd.to_datetime(df["expiry"], errors="coerce").dt.date
     elif "option_symbol" in df.columns:
-        # Intentar extraer expiry del símbolo (formato OCC)
         def extract_expiry(sym):
             try:
                 s = str(sym)
-                # Buscar 6 dígitos de fecha YYMMDD
                 for i in range(len(s)-5):
                     if s[i:i+6].isdigit():
                         return datetime.strptime(s[i:i+6], "%y%m%d").date()
@@ -227,11 +224,9 @@ def obtener_tape(fecha, ticker):
 
     df = procesar_df(partes, ticker).drop_duplicates(subset=["hora", "premium", "size"]).sort_values("hora")
 
-    # ===== FILTRO 0DTE / 1DTE =====
     if SOLO_0DTE and not df.empty and "expiry" in df.columns:
         hoy = fecha
         manana = hoy + timedelta(days=1)
-        # Solo contratos que vencen hoy o mañana
         df = df[df["expiry"].isin([hoy, manana])]
         print(f"  → Después de filtro 0DTE/1DTE: {len(df)} trades")
 
@@ -327,7 +322,8 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     )
     print(" ", caja.replace("\n", " | "))
 
-    fig, axs = plt.subplots(4, 1, figsize=(15, 12), sharex=True,
+    # Tamaño reducido para evitar DecompressionBomb
+    fig, axs = plt.subplots(4, 1, figsize=(13, 10), sharex=True,
                             gridspec_kw={"height_ratios": [3.6, 0.9, 1.1, 0.9]})
     fig.patch.set_facecolor(bg)
     ax1, axA, axT, axD = axs
@@ -404,7 +400,7 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
 
     plt.tight_layout()
     ruta = os.path.join(CARPETA, f"{grupo}_Q_{etiqueta}_{fecha}_{datetime.now().strftime('%H%M%S')}.png")
-    plt.savefig(ruta, dpi=160, facecolor=bg, bbox_inches="tight")
+    plt.savefig(ruta, dpi=110, facecolor=bg, bbox_inches="tight")
     plt.close()
     print("Gráfico →", ruta)
     return sesgo
