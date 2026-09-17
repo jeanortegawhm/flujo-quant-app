@@ -62,18 +62,26 @@ with tab1:
         <= ny.replace(hour=16, minute=0, second=0, microsecond=0)
     )
     st.caption(f"NY {ny:%Y-%m-%d %H:%M:%S}  |  {'ABIERTO' if abierto else 'CERRADO'}")
+
     auto = st.checkbox("En vivo cada 3 minutos (solo HOY)")
     if auto:
         if not abierto:
             st.warning("Mercado cerrado. El vivo solo corre 9:30–16:00 NY.")
         else:
             st_autorefresh(interval=180_000, key="vivo")
-            st.info("Vivo activo. Deja esta pestaña abierta. Cada 3 min corre HOY.")
+            st.info("Vivo activo. Cada 3 min genera SOLO HOY.")
             correr("flujo2.py", "HOY")
-    if st.button("Generar intradía AYER + HOY", type="primary"):
-        correr("flujo2.py", "AMBOS")
-    if st.button("Generar solo HOY"):
-        correr("flujo2.py", "HOY")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Solo AYER"):
+            correr("flujo2.py", "AYER")
+    with c2:
+        if st.button("AYER + HOY", type="primary"):
+            correr("flujo2.py", "AMBOS")
+    with c3:
+        if st.button("Solo HOY"):
+            correr("flujo2.py", "HOY")
 with tab2:
     st.subheader("15 sesiones + PW/QF de OI")
     st.write("Usa flujo_swing.py.")
