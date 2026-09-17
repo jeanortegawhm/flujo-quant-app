@@ -255,7 +255,18 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
         print("  sin precio", grupo)
         return
 
-    bg, fg, grid, linea = "#0b1220", "#e8eef7", "#1d2a3d", "#7eb6ff"
+    # Colores institucionales
+    bg      = "#0b1220"
+    fg      = "#e8eef7"
+    grid    = "#1d2a3d"
+    linea   = "#7eb6ff"
+    gold    = "#f1c40f"
+    green   = "#2ecc71"
+    red     = "#e74c3c"
+    purple  = "#6c7ae0"
+    teal    = "#1aa3a3"
+    pink    = "#d24b6b"
+
     umbral = MIN_BURBUJA.get(grupo, 30_000_000)
     px_c = px.copy()
     px_c.index = px_c.index.tz_convert(TZ_VER)
@@ -268,7 +279,8 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
         expo = g.groupby("min1")["exposicion"].sum()
         qdelta = g.groupby("min1")["qdelta"].sum()
         grandes = g[g["exposicion"] >= umbral].sort_values("exposicion", ascending=False)
-        if grandes.empty: grandes = g.nlargest(5, "exposicion")
+        if grandes.empty:
+            grandes = g.nlargest(6, "exposicion")
         top = grandes.head(MAX_ETIQUETAS)
         max_exp = g["exposicion"].max()
     else:
@@ -279,11 +291,11 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     agres = net_prem.get("serie", pd.Series(dtype=float))
     flow_ratio = net_prem.get("flow_ratio", 1.0)
     sesgo, senales, neto, q30 = leer_senales(last, px_c, niveles, qdelta, expo, grandes, flow_ratio)
-    color_s = "#2ecc71" if "ALCISTA" in sesgo else "#e74c3c" if "BAJISTA" in sesgo else "#f1c40f"
 
-    # Régimen simple
+    color_s = green if "ALCISTA" in sesgo else red if "BAJISTA" in sesgo else gold
     regimen = "POSITIVE GEX" if (niveles.get("QF") and last > niveles["QF"]) else "NEGATIVE GEX"
 
+    # Caja de información (estilo Quantium)
     caja = (
         f"{sesgo}  |  {regimen}\n"
         f"{last_t.strftime('%H:%M')} COL  ·  {grupo} {last:,.2f}\n"
@@ -293,66 +305,99 @@ def grafico(grupo, df, etiqueta, fecha, niveles, vol, net_prem):
     )
     print(" ", caja.replace("\n", " | "))
 
-    fig, axs = plt.subplots(4, 1, figsize=(14, 13), sharex=True,
-                            gridspec_kw={"height_ratios": [3.4, 1.0, 1.1, 0.95]})
+    # ========== FIGURA ==========
+    fig, axs = plt.subplots(4, 1, figsize=(15, 12), sharex=True,
+                            gridspec_kw={"height_ratios": [3.6, 0.9, 1.1, 0.9]})
     fig.patch.set_facecolor(bg)
     ax1, axA, axT, axD = axs
+
     for ax in axs:
         ax.set_facecolor(bg)
-        ax.grid(True, color=grid, alpha=0.6)
-        ax.tick_params(colors=fg)
-        for s in ax.spines.values(): s.set_color(grid)
+        ax.grid(True, color=grid, alpha=0.55)
+        ax.tick_params(colors=fg, labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_color(grid)
 
-    ax1.plot(px_c.index, px_c["Close"], color=linea, lw=1.6)
+    # ----- PRECIO -----
+    ax1.plot(px_c.index, px_c["Close"], color=linea, lw=1.7, zorder=3)
     lo, hi = float(px_c["Close"].min()), float(px_c["Close"].max())
-    pad = (hi - lo) * 0.10 or 1
+    pad = (hi - lo) * 0.12 or 1
     ax1.set_ylim(lo - pad, hi + pad)
-    ax1.set_title(f"{grupo}  |  Flujo Inusual  |  {etiqueta} {fecha}", loc="left", color=fg, fontsize=12, fontweight="bold")
-    ax1.text(0.01, 0.03, caja, transform=ax1.transAxes, color=color_s, fontsize=8.5,
-             fontweight="bold", va="bottom",
-             bbox=dict(boxstyle="round,pad=0.4", fc=bg, ec=color_s, alpha=0.93))
 
-    for k, color in [("CW", "#6c7ae0"), ("QF", "#1aa3a3"), ("PW", "#d24b6b"), ("MAGNET", "#f39c12")]:
+    ax1.set_title(f"{grupo}  |  Flujo Inusual  |  {etiqueta} {fecha}",
+                  loc="left", color=fg, fontsize=13, fontweight="bold", pad=10)
+
+    # Caja de info
+    ax1.text(0.01, 0.97, caja, transform=ax1.transAxes, color=color_s,
+             fontsize=8.5, fontweight="bold", va="top",
+             bbox=dict(boxstyle="round,pad=0.45", fc=bg, ec=color_s, alpha=0.92), zorder=20)
+
+    # Niveles
+    for k, color, ls in [("CW", purple, "--"), ("QF", teal, "-."), ("PW", pink, "--"), ("MAGNET", gold, ":")]:
         if niveles.get(k):
             y = niveles[k]
-            ax1.axhline(y, color=color, ls="--", lw=1.15, alpha=0.9)
-            ax1.text(0.004, y, f"{k} {y:.1f}", transform=ax1.get_yaxis_transform(),
-                     va="bottom", ha="left", fontsize=8, color="white", fontweight="bold",
-                     bbox=dict(fc=color, ec="none", pad=0.25))
+            ax1.axhline(y, color=color, ls=ls, lw=1.25, alpha=0.9, zorder=2)
+            ax1.text(0.003, y, f" {k} {y:.1f} ", transform=ax1.get_yaxis_transform(),
+                     va="center", ha="left", fontsize=8, color="white", fontweight="bold",
+                     bbox=dict(fc=color, ec="none", pad=0.3), zorder=15)
 
+    # Marcadores de flujo grande (estilo Quantium)
     for idx, row in (grandes.iterrows() if not grandes.empty else []):
         i = px.index.get_indexer([row["hora"]], method="nearest")[0]
-        x, y = px_c.index[i], float(px["Close"].iloc[i])
+        x = px_c.index[i]
+        y = float(px["Close"].iloc[i])
         put = row["contrato"] == "PUT"
-        ax1.scatter(x, y, s=380, facecolors="none", edgecolors="#f1c40f", lw=1.8, zorder=8)
-        ax1.scatter(x, y, s=45, marker=("v" if put else "^"),
-                    c=("#e74c3c" if put else "#2ecc71"), zorder=10)
+        size = 180 + min(row["exposicion"] / 80000, 420)
+
+        # Anillo dorado exterior
+        ax1.scatter(x, y, s=size + 90, facecolors="none", edgecolors=gold,
+                    linewidths=2.0, zorder=8, alpha=0.95)
+        # Punto central
+        ax1.scatter(x, y, s=38, c=gold, zorder=9)
+        # Triángulo dirección
+        ax1.scatter(x, y, s=55, marker=("v" if put else "^"),
+                    c=(red if put else green), zorder=10, edgecolors="black", linewidths=0.6)
+
         if idx in set(top.index):
-            ax1.annotate(fmt_usd(row["exposicion"]), xy=(x, y), xytext=(0, 11),
-                         textcoords="offset points", ha="center", color="#f1c40f",
-                         fontsize=8, fontweight="bold")
+            ax1.annotate(fmt_usd(row["exposicion"]),
+                         xy=(x, y), xytext=(0, 14 if not put else -16),
+                         textcoords="offset points", ha="center",
+                         color=gold, fontsize=8.5, fontweight="bold",
+                         bbox=dict(boxstyle="round,pad=0.2", fc=bg, ec=gold, alpha=0.85),
+                         zorder=12)
 
+    # ----- AGRESOR / NET PREMIUM -----
     if len(agres):
-        axA.bar(agres.index.tz_convert(TZ_VER), agres.values / 1e6, width=0.0007,
-                color=["#2ecc71" if v >= 0 else "#e74c3c" for v in agres.values])
-        axA.set_ylabel("NET PREM $M", fontsize=8, color=fg)
-    axA.axhline(0, color="#888", lw=0.6)
+        vals = agres.values / 1e6
+        colors = [green if v >= 0 else red for v in vals]
+        axA.bar(agres.index.tz_convert(TZ_VER), vals, width=0.00065, color=colors, alpha=0.85)
+    axA.axhline(0, color="#666", lw=0.7)
+    axA.set_ylabel("NET PREM $M", fontsize=8, color=fg)
 
+    # ----- TOTAL EXPOSICIÓN -----
     if len(expo):
-        axT.bar(expo.index, expo.values / 1e6, width=0.0007,
-                color=["#f1c40f" if v >= umbral else "#3d4f66" for v in expo.values])
-        axT.set_ylabel("EXPOSICIÓN $M", fontsize=8, color=fg)
+        vals = expo.values / 1e6
+        colors = [gold if v >= umbral/1e6 else "#3d4f66" for v in vals]
+        axT.bar(expo.index, vals, width=0.00065, color=colors, alpha=0.9)
+        # Etiquetas de los más grandes
+        for t, v in expo.nlargest(4).items():
+            if v >= umbral:
+                axT.text(t, v/1e6, fmt_usd(v), ha="center", va="bottom",
+                         color=gold, fontsize=7.5, fontweight="bold")
+    axT.set_ylabel("TOTAL $M", fontsize=8, color=fg)
 
+    # ----- Q-DELTA -----
     if len(qdelta):
-        axD.bar(qdelta.index, qdelta.values / 1e6, width=0.0007,
-                color=["#2ecc71" if v >= 0 else "#e74c3c" for v in qdelta.values])
-        axD.set_ylabel("Q-DELTA $M", fontsize=8, color=fg)
-    axD.axhline(0, color="#888", lw=0.6)
+        vals = qdelta.values / 1e6
+        colors = [green if v >= 0 else red for v in vals]
+        axD.bar(qdelta.index, vals, width=0.00065, color=colors, alpha=0.85)
+    axD.axhline(0, color="#666", lw=0.7)
+    axD.set_ylabel("Q-DELTA $M", fontsize=8, color=fg)
     axD.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
 
     plt.tight_layout()
     ruta = os.path.join(CARPETA, f"{grupo}_Q_{etiqueta}_{fecha}_{datetime.now().strftime('%H%M%S')}.png")
-    plt.savefig(ruta, dpi=150, facecolor=bg)
+    plt.savefig(ruta, dpi=160, facecolor=bg, bbox_inches="tight")
     plt.close()
     print("Gráfico →", ruta)
     return sesgo
