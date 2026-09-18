@@ -89,7 +89,7 @@ st.markdown("""
 <div class="q-hero">
   <div class="q-kicker">QUANT FLOW</div>
   <div class="q-title"><span>Flujo</span> Quant</div>
-  <div class="q-sub">QQQ/NDX · SPY/SPX · DIA/DJX · GLD — el print no es la dirección del ETF</div>
+  <div class="q-sub">QQQ/NDX · SPY/SPX · DIA/DJX · GLD — sesión 9:30–16:00 NY — el print no es la dirección del ETF</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -106,7 +106,7 @@ t1, t2, t3, t4, t5 = st.tabs(["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "
 with t1:
     st.markdown("""
     <div class="q-box">
-    <b>Qué ves.</b> Tape de QQQ, SPY, SPX+SPXW, DIA y GLD.<br>
+    <b>Qué ves.</b> Tape 9:30–16:00 de QQQ, SPY, SPX+SPXW, DIA y GLD.<br>
     <b>Cómo leer.</b> <i>C+/P+</i> verde = call compra o put venta.
     <i>C-/P-</i> rojo = call venta o put compra. Suma QD no es un print.
     </div>
@@ -180,7 +180,7 @@ with t4:
     st.markdown("""
     <div class="q-box">
     <b>Qué ves.</b> Libros Hunab / Gregory: QQQ vs NDX, SPY vs SPX, DIA vs DJX.
-    GLD no tiene par de índice limpio. Zoom = spot real.
+    Zoom = spot ±4%. DJX = Dow / 100. GLD va solo.
     </div>
     """, unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
@@ -191,13 +191,13 @@ with t4:
             c1, c2 = st.columns(2)
             for col, tk in ((c1, par_a), (c2, par_b)):
                 with col:
-                    niv = gex_niveles(tk, hoy)
                     spot = last_price(tk)
+                    niv = gex_niveles(tk, hoy, spot)
                     df = gex_strikes(tk, hoy, spot)
                     st.pyplot(fig_gex(tk, df, niv, spot), width="stretch")
         st.subheader("GLD")
-        niv = gex_niveles("GLD", hoy)
         spot = last_price("GLD")
+        niv = gex_niveles("GLD", hoy, spot)
         st.pyplot(fig_gex("GLD", gex_strikes("GLD", hoy, spot), niv, spot), width="stretch")
     except Exception as e:
         st.error(e)
@@ -205,7 +205,7 @@ with t4:
 with t5:
     st.markdown("""
     <div class="q-box">
-    <b>Qué ves.</b> GEX, OI y dark pool reciente. No es el tape del día.
+    <b>Qué ves.</b> GEX cerca del spot, OI y dark pool de la sesión 9:30–16:00.
     </div>
     """, unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
@@ -213,9 +213,9 @@ with t5:
     try:
         from paneles import gex_niveles, gex_strikes, oi_vol, darkpool, fig_gex, fig_oi, fig_dp, last_price
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
-        g = gex_niveles(tk, hoy)
-        o = oi_vol(tk, hoy)
         spot = last_price(tk)
+        g = gex_niveles(tk, hoy, spot)
+        o = oi_vol(tk, hoy)
         df = gex_strikes(tk, hoy, spot)
         a, b, c, d = st.columns(4)
         a.metric("Call wall", str(g.get("call_wall", "—")))
@@ -230,6 +230,6 @@ with t5:
         h.metric("Put vol", f"{float(o.get('put_volume') or 0):,.0f}")
         st.pyplot(fig_gex(tk, df, g, spot), width="stretch")
         st.pyplot(fig_oi(tk, o), width="stretch")
-        st.pyplot(fig_dp(tk, darkpool(tk)), width="stretch")
+        st.pyplot(fig_dp(tk, darkpool(tk, hoy), spot), width="stretch")
     except Exception as e:
         st.error(e)
