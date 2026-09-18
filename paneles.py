@@ -14,19 +14,12 @@ YMAP = {
     "DIA": "DIA", "DJX": "^DJI",
     "GLD": "GLD",
 }
-UW_ALIAS = {
-    "NDX": ["NDX", "QQQ"],
-    "SPX": ["SPX", "SPXW"],
-    "DJX": ["DJX", "DIA"],
-}
+UW_ALIAS = {"NDX": ["NDX", "QQQ"], "SPX": ["SPX", "SPXW"], "DJX": ["DJX", "DIA"]}
 
 def get(url, params=None):
     try:
-        r = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {API}", "Accept": "application/json"},
-            params=params or {}, timeout=25,
-        )
+        r = requests.get(url, headers={"Authorization": f"Bearer {API}", "Accept": "application/json"},
+                         params=params or {}, timeout=25)
         if r.status_code != 200:
             return None
         p = r.json()
@@ -42,8 +35,7 @@ def fnum(x):
 
 def last_price(tk):
     try:
-        px = yf.download(YMAP.get(tk, tk), period="5d", interval="5m",
-                         progress=False, auto_adjust=True)
+        px = yf.download(YMAP.get(tk, tk), period="5d", interval="5m", progress=False, auto_adjust=True)
         if px is None or px.empty:
             return None
         if isinstance(px.columns, pd.MultiIndex):
@@ -79,8 +71,7 @@ def gex_niveles(tk, fecha, spot=None):
                 out[k] = v
     if spot:
         limpio = {}
-        for k, pct in (("gamma_flip", 0.02), ("call_wall", 0.04),
-                       ("put_wall", 0.04), ("gamma_magnet", 0.04)):
+        for k, pct in (("gamma_flip", 0.02), ("call_wall", 0.04), ("put_wall", 0.04), ("gamma_magnet", 0.04)):
             v = cerca(out.get(k), spot, pct)
             if v is not None:
                 limpio[k] = v
@@ -95,14 +86,10 @@ def _pick(df, names):
 
 def _fetch_strikes(tk, fecha):
     for path, extra in (
-        (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike",
-         {"date": str(fecha), "source": "oi"}),
-        (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike",
-         {"date": str(fecha)}),
-        (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure/strike",
-         {"date": str(fecha)}),
-        (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure-by-strike",
-         {"date": str(fecha)}),
+        (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike", {"date": str(fecha), "source": "oi"}),
+        (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike", {"date": str(fecha)}),
+        (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure/strike", {"date": str(fecha)}),
+        (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure-by-strike", {"date": str(fecha)}),
     ):
         raw = get(path, extra)
         if isinstance(raw, list) and raw:
@@ -123,12 +110,8 @@ def gex_strikes(tk, fecha, spot=None):
     df.attrs["uw_ticker"] = used
     df["strike"] = pd.to_numeric(df["strike"], errors="coerce")
     df = df.dropna(subset=["strike"])
-    df["call_gex"] = _pick(df, (
-        "call_gamma_oi", "call_gex", "call_gamma", "gex_call", "call_gamma_vol",
-    ))
-    df["put_gex"] = _pick(df, (
-        "put_gamma_oi", "put_gex", "put_gamma", "gex_put", "put_gamma_vol",
-    )).abs()
+    df["call_gex"] = _pick(df, ("call_gamma_oi", "call_gex", "call_gamma", "gex_call", "call_gamma_vol"))
+    df["put_gex"] = _pick(df, ("put_gamma_oi", "put_gex", "put_gamma", "gex_put", "put_gamma_vol")).abs()
     if spot:
         for lo, hi in ((0.985, 1.015), (0.97, 1.03), (0.96, 1.04)):
             near = df[(df["strike"] >= spot * lo) & (df["strike"] <= spot * hi)]
@@ -149,10 +132,8 @@ def oi_vol(tk, fecha):
 def darkpool(tk, fecha=None):
     if fecha is None:
         fecha = datetime.now(ZoneInfo("America/New_York")).date()
-    a = datetime(fecha.year, fecha.month, fecha.day, 9, 30,
-                 tzinfo=ZoneInfo("America/New_York")).astimezone(ZoneInfo("UTC"))
-    b = datetime(fecha.year, fecha.month, fecha.day, 16, 5,
-                 tzinfo=ZoneInfo("America/New_York")).astimezone(ZoneInfo("UTC"))
+    a = datetime(fecha.year, fecha.month, fecha.day, 9, 30, tzinfo=ZoneInfo("America/New_York")).astimezone(ZoneInfo("UTC"))
+    b = datetime(fecha.year, fecha.month, fecha.day, 16, 5, tzinfo=ZoneInfo("America/New_York")).astimezone(ZoneInfo("UTC"))
     raw = get(f"https://api.unusualwhales.com/api/darkpool/{tk}", {
         "date": str(fecha),
         "newer_than": a.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -183,18 +164,15 @@ def fig_gex(tk, df, niv, spot):
     extra = f"  ({tag})" if tag and tag != tk else ""
     if spot:
         ax.set_ylim(spot * 0.96, spot * 1.04)
-    vacio = (
-        df is None or df.empty or
-        float((df.get("call_gex", pd.Series(dtype=float)).abs()
-               + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0
-    )
+    vacio = (df is None or df.empty or
+             float((df.get("call_gex", pd.Series(dtype=float)).abs()
+                    + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0)
     if vacio:
         ax.set_title(f"{tk}{extra}  sin GEX cerca del spot", color="#e8eef7", loc="left")
         if spot:
             ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0, label=f"Spot {spot:.2f}")
             ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7)
-        ax.text(0.03, 0.5,
-                "No hay call_gamma_oi / put_gamma_oi ±4% del spot.\nNo se pinta la cadena lejana.",
+        ax.text(0.03, 0.5, "No hay call_gamma_oi / put_gamma_oi ±4% del spot.\nNo se pinta la cadena lejana.",
                 transform=ax.transAxes, color="#8b9bb0", fontsize=8)
         return fig
     y = df["strike"].values
@@ -229,14 +207,9 @@ def fig_oi(tk, o):
     fig, ax = plt.subplots(figsize=(7.2, 2.4), facecolor="#0b1220")
     ax.set_facecolor("#0b1220")
     ax.tick_params(colors="#e8eef7", labelsize=8)
-    vals = [
-        float(o.get("call_open_interest") or 0),
-        float(o.get("put_open_interest") or 0),
-        float(o.get("call_volume") or 0),
-        float(o.get("put_volume") or 0),
-    ]
-    ax.bar(["Call OI", "Put OI", "Call vol", "Put vol"], vals,
-           color=["#2ecc71", "#9b59b6", "#5ec8c6", "#e74c3c"])
+    vals = [float(o.get("call_open_interest") or 0), float(o.get("put_open_interest") or 0),
+            float(o.get("call_volume") or 0), float(o.get("put_volume") or 0)]
+    ax.bar(["Call OI", "Put OI", "Call vol", "Put vol"], vals, color=["#2ecc71", "#9b59b6", "#5ec8c6", "#e74c3c"])
     ax.set_title(f"{tk}  OI / volumen", color="#e8eef7", loc="left", fontsize=10)
     fig.tight_layout()
     return fig
@@ -268,8 +241,7 @@ def fig_dp(tk, df, spot=None):
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=0.9)
         ax.set_ylim(spot * 0.97, spot * 1.03)
-    ax.set_title(f"{tk}  dark pool sesión 9:30–16:00  ({len(df)} prints)",
-                 color="#e8eef7", loc="left", fontsize=10)
+    ax.set_title(f"{tk}  dark pool sesión 9:30–16:00  ({len(df)} prints)", color="#e8eef7", loc="left", fontsize=10)
     ax.set_xlabel("Notional", color="#8b9bb0")
     ax.set_ylabel("Precio", color="#8b9bb0")
     fig.tight_layout()
