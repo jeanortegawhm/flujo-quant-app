@@ -17,6 +17,7 @@ GRUPOS = {
     "GLD": ["GLD"],
 }
 YAHOO = {"SPX": "^GSPC", "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "GLD": "GLD"}
+<<<<<<< HEAD
 MIN_PREM = {
     "SPX": 500_000, "SPXW": 500_000,
     "SPY": 250_000, "QQQ": 250_000,
@@ -30,6 +31,9 @@ MIN_BURBUJA = {
     "SPX": 6_000_000, "SPY": 1_200_000, "QQQ": 1_200_000,
     "DIA": 250_000, "GLD": 300_000,
 }
+=======
+MIN_BURBUJA = {"SPX": 6_000_000, "SPY": 1_200_000, "QQQ": 1_200_000, "DIA": 800_000, "GLD": 800_000}
+>>>>>>> d6bbbac3eabb39ee669c834a0a6b7519b9e6b622
 
 MIN_PREMIUM = int(os.getenv("MIN_PREMIUM", "250000"))
 SOLO_0DTE = os.getenv("SOLO_0DTE", "0") == "1"
@@ -268,9 +272,14 @@ def tape(fecha, ticker):
     df = df[(df["hora"] >= a) & (df["hora"] <= b)]
     max_dte = MAX_DTE_MAP.get(ticker, MAX_DTE)
     if "expiry" in df.columns:
+<<<<<<< HEAD
         lim = fecha + timedelta(days=max_dte)
         near = df[df["expiry"].notna() & (df["expiry"] <= lim)]
         df = near if not near.empty else df.nlargest(min(8, len(df)), "premium")
+=======
+        lim = fecha + timedelta(days=MAX_DTE)
+        df = df[df["expiry"].notna() & (df["expiry"] <= lim)]
+>>>>>>> d6bbbac3eabb39ee669c834a0a6b7519b9e6b622
     if SOLO_0DTE and "expiry" in df.columns:
         d0 = df[df["expiry"].isin([fecha, fecha + timedelta(days=1)])]
         if not d0.empty:
@@ -522,7 +531,11 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     )
     fig.text(0.01, 0.008,
              f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
+<<<<<<< HEAD
              f"9:30-16:00  |  C+/P+ verde = call compra o put venta  |  "
+=======
+             f"9:30–16:00  |  C+/P+ verde = call compra o put venta  |  "
+>>>>>>> d6bbbac3eabb39ee669c834a0a6b7519b9e6b622
              f"C-/P- rojo = call venta o put compra  |  suma QD != print",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
