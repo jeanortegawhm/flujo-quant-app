@@ -37,7 +37,7 @@ TZ, TZ_COL = ZoneInfo("America/New_York"), ZoneInfo("America/Bogota")
 CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
 os.makedirs(CARPETA, exist_ok=True)
 headers = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
-BLOQUES = [(9,30,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(15,15,16,5)]
+BLOQUES = [(9,25,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(15,15,16,5)]
 
 def ayer():
     d = datetime.now(TZ).date() - timedelta(days=1)
@@ -252,9 +252,7 @@ def tape(fecha, ticker):
     df = df[(df["hora"] >= a) & (df["hora"] <= b)]
     if "expiry" in df.columns:
         lim = fecha + timedelta(days=MAX_DTE)
-        mask = df["expiry"].isna() | (df["expiry"] <= lim)
-        if mask.any():
-            df = df[mask]
+        df = df[df["expiry"].notna() & (df["expiry"] <= lim)]
     if SOLO_0DTE and "expiry" in df.columns:
         df = df[df["expiry"].isin([fecha, fecha + timedelta(days=1)])]
     return df
@@ -270,7 +268,7 @@ def precio(grupo, fecha):
             px.columns = px.columns.get_level_values(0)
         px.index = pd.to_datetime(px.index)
         px.index = px.index.tz_localize("America/New_York") if px.index.tz is None else px.index.tz_convert(TZ)
-        px = px[(px.index >= a - pd.Timedelta(minutes=5)) & (px.index <= b)]
+        px = px[(px.index >= a - pd.Timedelta(minutes=10)) & (px.index <= b)]
         cols = [c for c in ("Open","High","Low","Close") if c in px.columns]
         if cols:
             frames.append(px[cols].copy())
@@ -282,7 +280,17 @@ def precio(grupo, fecha):
         miss = extra.index.difference(px.index)
         if len(miss):
             px = pd.concat([px, extra.loc[miss]]).sort_index()
-    return px[~px.index.duplicated()].sort_index()
+    px = px[~px.index.duplicated()].sort_index()
+    px = px[px.index <= b]
+    if px.empty:
+        return px
+    if px.index[0] > a:
+        first = px.iloc[[0]].copy()
+        first.index = pd.DatetimeIndex([a])
+        if "Open" in first.columns:
+            first.loc[a, "Open"] = float(px["Open"].iloc[0])
+        px = pd.concat([first, px]).sort_index()
+    return px
 
 def qdelta_30m(df):
     if df is None or df.empty:
@@ -484,17 +492,18 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     axT.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=TZ))
 
     ratio = float(net.get("flow_ratio", 1) or 1)
-    sem = extra.get("sem", {"texto": "-", "color": "Y"})
+    sem = extra.get("sem", {"texto": "-", "color": "Y", "p1": 0, "p2": 0, "p3": 0})
     qd30 = extra.get("qd30", 0)
-    iv = f"  |  IV {vol['iv']:.1f}%" if vol.get("iv") else ""
+    iv = f"   ·   IV {vol['iv']:.1f}%" if vol.get("iv") else ""
     ax1.set_title(
-        f"{grupo} {etiqueta} {fecha}  |  {sem['color']} {sem['texto']}  |  "
-        f"net {fmt_usd(neto)}  |  30m {fmt_usd(qd30)}  |  flow {ratio:.2f}{iv}",
+        f"{grupo} {etiqueta} {fecha}   |   {sem['color']} {sem['texto']}   |   "
+        f"net {fmt_usd(neto)}   ·   30m {fmt_usd(qd30)}   ·   flow {ratio:.2f}{iv}",
         color=fg, loc="left", fontsize=10, pad=6,
     )
     fig.text(0.01, 0.008,
              f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
-             f"C+/P+ verde = call compra o put venta  |  C-/P- rojo = call venta o put compra  |  suma QD != print",
+             f"9:30–16:00  |  C+/P+ verde = call compra o put venta  |  "
+             f"C-/P- rojo = call venta o put compra  |  suma QD != print",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
     ruta = os.path.join(CARPETA, f"{grupo}_{etiqueta}_{fecha}_{datetime.now(TZ):%H%M%S}.png")
