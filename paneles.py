@@ -5,12 +5,18 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 
 API = os.getenv("UW_API_KEY", "")
-PARES = [("QQQ", "NDX"), ("SPY", "SPX"), ("IWM", "RUT")]
+PARES = [("QQQ", "NDX"), ("SPY", "SPX"), ("DIA", "DJX")]
 YMAP = {
-    "QQQ": "QQQ", "NDX": "^NDX", "SPY": "SPY", "SPX": "^GSPC",
-    "IWM": "IWM", "RUT": "^RUT", "IBIT": "IBIT", "GLD": "GLD",
+    "QQQ": "QQQ", "NDX": "^NDX",
+    "SPY": "SPY", "SPX": "^GSPC",
+    "DIA": "DIA", "DJX": "^DJI",
+    "GLD": "GLD",
 }
-UW_ALIAS = {"RUT": ["RUT", "IWM"], "NDX": ["NDX", "QQQ"], "SPX": ["SPX", "SPXW"]}
+UW_ALIAS = {
+    "NDX": ["NDX", "QQQ"],
+    "SPX": ["SPX", "SPXW"],
+    "DJX": ["DJX", "DIA", "DJI"],
+}
 
 def get(url, params=None):
     try:
