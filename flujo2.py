@@ -35,7 +35,8 @@ BLOQUES = [(9,30,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(1
 
 def ayer():
     d = datetime.now(TZ).date() - timedelta(days=1)
-    while d.weekday() >= 5: d -= timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
     return d
 
 def sesion(fecha):
@@ -50,31 +51,41 @@ def fmt_usd(x):
     return f"{s}${x:,.0f}"
 
 def num(x):
-    try: return None if x in (None, "") else float(x)
-    except Exception: return None
+    try:
+        return None if x in (None, "") else float(x)
+    except Exception:
+        return None
 
 def get_json(url, params=None):
     try:
         r = requests.get(url, headers=headers, params=params or {}, timeout=25)
-        if r.status_code != 200 or not r.text: return None
-        p = r.json(); return p.get("data") if isinstance(p, dict) else p
-    except Exception: return None
+        if r.status_code != 200 or not r.text:
+            return None
+        p = r.json()
+        return p.get("data") if isinstance(p, dict) else p
+    except Exception:
+        return None
 
 def telegram(msg):
     tok, chat = os.getenv("TELEGRAM_BOT_TOKEN",""), os.getenv("TELEGRAM_CHAT_ID","")
-    if not tok or not chat: return
+    if not tok or not chat:
+        return
     try:
         requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
                       json={"chat_id": chat, "text": msg}, timeout=12)
-    except Exception: pass
+    except Exception:
+        pass
 
 def dte_de(row, fecha):
     exp = row.get("expiry")
-    if exp is None or (isinstance(exp, float) and np.isnan(exp)): return ""
+    if exp is None or (isinstance(exp, float) and np.isnan(exp)):
+        return ""
     try:
-        if hasattr(exp, "date"): exp = exp.date()
+        if hasattr(exp, "date"):
+            exp = exp.date()
         return f"{max((exp - fecha).days, 0)}d"
-    except Exception: return ""
+    except Exception:
+        return ""
 
 def estilo(row):
     tags = str(row.get("tags", "") or "").lower()
@@ -82,15 +93,52 @@ def estilo(row):
     if "block" in tags: return "BLK"
     return "PRT"
 
+def nivel_util(v, lo, hi, last, max_pct=0.015):
+    if v is None:
+        return None
+    try:
+        v = float(v)
+    except Exception:
+        return None
+    base = last or ((lo + hi) / 2 if hi else 1) or 1
+    if abs(v - base) / max(abs(base), 1) > max_pct * 3:
+        return None
+    if hi and v > hi * (1 + max_pct * 1.5):
+        return None
+    if lo and v < lo * (1 - max_pct * 1.5):
+        return None
+    return v
+
+def limpiar_niveles(niv, lo, hi, last):
+    out = {}
+    for k, pct in (("QF", 0.012), ("PW", 0.018), ("CW", 0.018), ("MAGNET", 0.018)):
+        v = nivel_util(niv.get(k), lo, hi, last, pct)
+        if v is not None:
+            out[k] = v
+    return out
+
+def etiqueta_print(r, fecha):
+    if r["contrato"] == "C" and r["signo"] > 0: acc = "C+"
+    elif r["contrato"] == "C" and r["signo"] < 0: acc = "C-"
+    elif r["contrato"] == "P" and r["signo"] < 0: acc = "P-"
+    elif r["contrato"] == "P" and r["signo"] > 0: acc = "P+"
+    else: acc = str(r.get("contrato") or "")
+    txt = f"{fmt_usd(r['premium'])} {acc}{dte_de(r, fecha)}"
+    if r.get("estilo") and r["estilo"] != "PRT":
+        txt += f" {r['estilo']}"
+    return txt
+
 def niveles(tk, fecha, spot=None):
     raw = {}
     for src in ("oi", "vol"):
         d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
                      {"date": str(fecha), "source": src})
-        if not isinstance(d, dict): continue
+        if not isinstance(d, dict):
+            continue
         for k, c in (("CW","call_wall"),("PW","put_wall"),("QF","gamma_flip"),("MAGNET","gamma_magnet")):
             v = num(d.get(c))
-            if v is not None: raw[f"{k}_{src.upper()}"] = v
+            if v is not None:
+                raw[f"{k}_{src.upper()}"] = v
     return {k: raw.get(f"{k}_OI") or raw.get(f"{k}_VOL") for k in ("CW","PW","QF","MAGNET")}
 
 def vol_extra(tk, fecha):
@@ -99,34 +147,42 @@ def vol_extra(tk, fecha):
     if isinstance(rows, list) and rows:
         d1 = next((r for r in rows if num(r.get("days")) == 1), None)
         d30 = next((r for r in rows if num(r.get("days")) == 30), rows[-1])
-        if d1: out["imp_move_pct"] = num(d1.get("implied_move_perc"))
+        if d1:
+            out["imp_move_pct"] = num(d1.get("implied_move_perc"))
         if d30:
-            out["iv"] = num(d30.get("volatility")); out["ivp"] = num(d30.get("percentile"))
-    if out["iv"] and out["iv"] < 3: out["iv"] *= 100
+            out["iv"] = num(d30.get("volatility"))
+            out["ivp"] = num(d30.get("percentile"))
+    if out["iv"] and out["iv"] < 3:
+        out["iv"] *= 100
     return out
 
 def net_prem(tk, fecha):
     vac = {"net_call": 0, "net_put": 0, "flow_ratio": 1.0, "serie": pd.Series(dtype=float)}
     rows = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/net-prem-ticks", {"date": str(fecha)})
-    if not isinstance(rows, list) or not rows: return vac
+    if not isinstance(rows, list) or not rows:
+        return vac
     df = pd.DataFrame(rows)
     df["hora"] = pd.to_datetime(df.get("tape_time"), utc=True, errors="coerce").dt.tz_convert(TZ)
     df["net_call"] = pd.to_numeric(df.get("net_call_premium", 0), errors="coerce").fillna(0)
     df["net_put"] = pd.to_numeric(df.get("net_put_premium", 0), errors="coerce").fillna(0)
     df["agres"] = df["net_call"] - df["net_put"]
     tc, tp = float(df["net_call"].sum()), float(df["net_put"].sum())
-    bull = max(tc, 0) + max(-tp, 0); bear = max(-tc, 0) + max(tp, 0)
+    bull = max(tc, 0) + max(-tp, 0)
+    bear = max(-tc, 0) + max(tp, 0)
     ratio = bull / bear if bear else (2 if bull else 1)
     mins = max(int(FRANJA_MIN), 5)
     a, b = sesion(fecha)
-    serie = (df.dropna(subset=["hora"]).set_index("hora")["agres"].resample(f"{mins}min").sum().fillna(0))
+    serie = (df.dropna(subset=["hora"]).set_index("hora")["agres"]
+             .resample(f"{mins}min").sum().fillna(0))
     return {"net_call": tc, "net_put": tp, "flow_ratio": ratio,
             "serie": serie[(serie.index >= a) & (serie.index <= b)]}
 
 def lado(row):
     tags = str(row.get("tags", "") or "").lower()
-    if "ask_side" in tags: return "COMPRA"
-    if "bid_side" in tags: return "VENTA"
+    if "ask_side" in tags:
+        return "COMPRA"
+    if "bid_side" in tags:
+        return "VENTA"
     p = pd.to_numeric(row.get("price"), errors="coerce")
     bid = pd.to_numeric(row.get("nbbo_bid"), errors="coerce")
     ask = pd.to_numeric(row.get("nbbo_ask"), errors="coerce")
@@ -136,7 +192,8 @@ def lado(row):
 
 def procesar_df(data, ticker):
     df = pd.DataFrame(data)
-    if df.empty: return df
+    if df.empty:
+        return df
     raw = df["executed_at"] if "executed_at" in df.columns else df.get("created_at")
     try:
         s0 = str(raw.iloc[0]) if raw is not None and len(raw) else ""
@@ -180,15 +237,18 @@ def tape(fecha, ticker):
         })
         data = data if isinstance(data, list) else []
         print(f"  {ticker} {h1:02d}:{m1:02d}-{h2:02d}:{m2:02d}: {len(data)}")
-        out.extend(data); time.sleep(0.12)
-    if not out: return pd.DataFrame()
+        out.extend(data)
+        time.sleep(0.12)
+    if not out:
+        return pd.DataFrame()
     df = procesar_df(out, ticker).drop_duplicates(["hora", "premium"]).sort_values("hora")
     a, b = sesion(fecha)
     df = df[(df["hora"] >= a) & (df["hora"] <= b)]
     if "expiry" in df.columns:
         lim = fecha + timedelta(days=MAX_DTE)
         mask = df["expiry"].isna() | (df["expiry"] <= lim)
-        if mask.any(): df = df[mask]
+        if mask.any():
+            df = df[mask]
     if SOLO_0DTE and "expiry" in df.columns:
         df = df[df["expiry"].isin([fecha, fecha + timedelta(days=1)])]
     return df
@@ -198,43 +258,58 @@ def precio(grupo, fecha):
     frames = []
     for iv in ("1m", "5m"):
         px = yf.download(YAHOO[grupo], period="10d", interval=iv, progress=False, auto_adjust=True)
-        if px is None or px.empty: continue
+        if px is None or px.empty:
+            continue
         if isinstance(px.columns, pd.MultiIndex):
             px.columns = px.columns.get_level_values(0)
         px.index = pd.to_datetime(px.index)
         px.index = px.index.tz_localize("America/New_York") if px.index.tz is None else px.index.tz_convert(TZ)
         px = px[(px.index >= a - pd.Timedelta(minutes=5)) & (px.index <= b)]
         cols = [c for c in ("Open","High","Low","Close") if c in px.columns]
-        if cols: frames.append(px[cols].copy())
-    if not frames: return pd.DataFrame()
+        if cols:
+            frames.append(px[cols].copy())
+    if not frames:
+        return pd.DataFrame()
     px = frames[0]
     if len(frames) > 1:
         extra = frames[1]
         miss = extra.index.difference(px.index)
-        if len(miss): px = pd.concat([px, extra.loc[miss]]).sort_index()
+        if len(miss):
+            px = pd.concat([px, extra.loc[miss]]).sort_index()
     return px[~px.index.duplicated()].sort_index()
 
 def qdelta_30m(df):
-    if df is None or df.empty: return 0.0
+    if df is None or df.empty:
+        return 0.0
     t1 = df["hora"].max()
     return float(df.loc[df["hora"] >= t1 - pd.Timedelta(minutes=30), "qdelta"].sum())
+
+def qf_en_rango(qf, lo, hi):
+    return bool(qf and lo * 0.997 <= qf <= hi * 1.003)
 
 def semaforo(last, niv, ratio, qd30, vol, hi, lo, open_px):
     qf, pw, cw = niv.get("QF"), niv.get("PW"), niv.get("CW")
     p1 = 0
-    if qf: p1 = 1 if last >= qf else -1
-    if last >= (open_px or last) and last > lo * 1.004 and p1 < 0:
-        p1 = 0
-    if qf and last >= qf: p1 = 1
-    if cw and last > cw: p1 = 1
+    if qf_en_rango(qf, lo, hi):
+        if last >= qf:
+            p1 = 1
+        elif abs(last - qf) / max(abs(qf), 1) >= 0.003:
+            p1 = -1
+    if cw and last > cw:
+        p1 = 1
+    if pw and last < pw:
+        p1 = -1
     p2 = 1 if qd30 > 250_000 else -1 if qd30 < -250_000 else 0
-    if ratio >= 1.25 and p2 >= 0: p2 = 1
-    if ratio <= 0.8 and p2 <= 0: p2 = -1
+    if ratio >= 1.25 and p2 >= 0:
+        p2 = 1
+    if ratio <= 0.8 and p2 <= 0:
+        p2 = -1
     imp = vol.get("imp_move_pct") or 0
     ivp = vol.get("ivp") or 50
     rng = (hi - lo) / max(abs(last), 1)
     p3 = p2 if imp and rng < imp * 0.75 and p2 != 0 else 0
-    if ivp and ivp >= 85: p3 = 0
+    if ivp and ivp >= 85:
+        p3 = 0
     up = sum(v > 0 for v in (p1, p2, p3))
     dn = sum(v < 0 for v in (p1, p2, p3))
     if up >= 2 and up > dn:
@@ -244,25 +319,28 @@ def semaforo(last, niv, ratio, qd30, vol, hi, lo, open_px):
     return {"p1": p1, "p2": p2, "p3": p3, "color": "🟡", "texto": f"{max(up, dn)}/3 NEUTRO"}
 
 def top_txt(part, fecha):
-    if part is None or part.empty: return "sin print"
+    if part is None or part.empty:
+        return "sin print"
     r = part.loc[part["premium"].idxmax()]
-    return f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, fecha)}"
+    return etiqueta_print(r, fecha)
 
 def lectura(df, px, niv, last, fecha):
-    if px is None or px.empty: return "Sin precio."
+    if px is None or px.empty:
+        return "Sin precio."
     open_px = float(px["Open"].iloc[0]) if "Open" in px.columns else float(px["Close"].iloc[0])
     lo = float(px["Low"].min()) if "Low" in px.columns else float(px["Close"].min())
     hi = float(px["High"].max()) if "High" in px.columns else float(px["Close"].max())
     t_low = px["Low"].idxmin() if "Low" in px.columns else px["Close"].idxmin()
     drop = (open_px - lo) / max(abs(open_px), 1)
     qf = niv.get("QF")
-    if qf:
-        if last >= qf: gex = f"Cierre sobre QF {qf:.2f} (dealer frena)"
-        else: gex = f"Cierre bajo QF {qf:.2f} (dealer amplifica)"
-        if qf > hi * 1.003: gex += " | QF arriba, fuera de escala"
-        if qf < lo * 0.997: gex += " | QF abajo, fuera de escala"
+    if not qf:
+        gex = "Sin QF usable en el rango del dia."
+    elif abs(last - qf) / max(abs(qf), 1) < 0.003:
+        gex = f"Cierre pegado a QF {qf:.2f}. Sin regimen claro."
+    elif last >= qf:
+        gex = f"Cierre sobre QF {qf:.2f} (dealer frena)"
     else:
-        gex = "Sin QF"
+        gex = f"Cierre bajo QF {qf:.2f} (dealer amplifica)"
     n_c = n_r = 0.0
     caida = rebote = pd.DataFrame()
     if df is not None and not df.empty:
@@ -291,7 +369,8 @@ def lectura(df, px, niv, last, fecha):
 def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     px = precio(grupo, fecha)
     if px.empty:
-        print("  sin precio", grupo); return None
+        print("  sin precio", grupo)
+        return None
     a0, b0 = sesion(fecha)
     bg, fg, grid, gold = "#0b1220", "#e8eef7", "#1d2a3d", "#d4af37"
     last = float(px["Close"].iloc[-1])
@@ -312,7 +391,8 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelsize=8)
         ax.grid(True, color=grid, alpha=0.28)
-        for s in ax.spines.values(): s.set_color(grid)
+        for s in ax.spines.values():
+            s.set_color(grid)
         ax.set_xlim(a0, b0)
     axA.grid(False)
     plt.setp(ax1.get_xticklabels(), visible=False)
@@ -328,11 +408,13 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     neto = 0.0
     if df is not None and not df.empty:
         grandes = df[df["premium"] >= umbral]
-        if grandes.empty: grandes = df.nlargest(5, "premium")
+        if grandes.empty:
+            grandes = df.nlargest(5, "premium")
         top = grandes.nlargest(MAX_ETIQUETAS, "premium")
         for _, r in grandes.iterrows():
             y = r["spot"] if r["spot"] else last
-            if not (lo_s - pad <= y <= hi_s + pad): y = last
+            if not (lo_s - pad <= y <= hi_s + pad):
+                y = last
             col = "#2ecc71" if r["signo"] > 0 else "#e74c3c"
             ax1.scatter(r["hora"], y, s=200, facecolors="none", edgecolors=gold, lw=1.5, zorder=6)
             ax1.scatter(r["hora"], y, s=26, c=gold, zorder=7)
@@ -340,12 +422,13 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         usados = []
         for _, r in top.iterrows():
             y = r["spot"] if r["spot"] else last
-            if not (lo_s - pad <= y <= hi_s + pad): y = last
-            if any(abs((r["hora"] - t).total_seconds()) < 180 for t in usados): continue
+            if not (lo_s - pad <= y <= hi_s + pad):
+                y = last
+            if any(abs((r["hora"] - t).total_seconds()) < 180 for t in usados):
+                continue
             usados.append(r["hora"])
-            txt = f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, fecha)}"
-            if r["estilo"] != "PRT": txt += f" {r['estilo']}"
-            ax1.annotate(txt, (r["hora"], y), textcoords="offset points", xytext=(6, 8),
+            ax1.annotate(etiqueta_print(r, fecha), (r["hora"], y),
+                         textcoords="offset points", xytext=(6, 8),
                          color=gold, fontsize=7.4, fontweight="bold")
         neto = float(df["qdelta"].sum())
         vis = df.copy()
@@ -361,15 +444,12 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
 
     for k, col in (("PW", "#e74c3c"), ("QF", "#1aa3a3"), ("CW", "#2ecc71")):
         v = niv.get(k)
-        if v is None: continue
+        if v is None:
+            continue
         if lo_s - pad <= v <= hi_s + pad:
             ax1.axhline(v, color=col, ls="--", lw=1.15)
             ax1.text(a0, v, f" {k} {v:.2f} ", color="white", fontsize=8,
                      fontweight="bold", va="bottom", bbox=dict(fc=col, ec="none", pad=0.2))
-        else:
-            lado_txt = "arriba" if v > hi_s else "abajo"
-            ax1.text(0.99, 0.97 if v > hi_s else 0.12, f"{k} {v:.2f} ({lado_txt})",
-                     transform=ax1.transAxes, color=col, fontsize=7.5, ha="right", va="top")
     ax1.text(1.0, last, f" {last:,.2f} ", transform=ax1.get_yaxis_transform(),
              color="white", fontsize=8, va="center", ha="left",
              bbox=dict(fc="#3d5afe", ec="none", pad=0.22))
@@ -379,7 +459,9 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
 
     serie = net.get("serie", pd.Series(dtype=float))
-    axA.set_ylim(0, 1); axA.set_yticks([]); axA.set_ylabel("AGRESOR", color=fg, fontsize=7)
+    axA.set_ylim(0, 1)
+    axA.set_yticks([])
+    axA.set_ylabel("AGRESOR", color=fg, fontsize=7)
     if len(serie):
         vals = serie.values.astype(float)
         mx = np.percentile(np.abs(vals), 80) or 1
@@ -406,7 +488,7 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     )
     fig.text(0.01, 0.008,
              f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
-             f"verde = call compra / put venta   rojo = put compra / call venta  |  suma QD != print",
+             f"C+/P+ verde = call compra o put venta  |  C-/P- rojo = call venta o put compra  |  suma QD != print",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
     ruta = os.path.join(CARPETA, f"{grupo}_{etiqueta}_{fecha}_{datetime.now(TZ):%H%M%S}.png")
@@ -428,7 +510,8 @@ def procesar(fecha, etiqueta, resumen):
         frames = []
         for tk in ticks:
             t = tape(fecha, tk)
-            if t is not None and not t.empty: frames.append(t)
+            if t is not None and not t.empty:
+                frames.append(t)
         df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
         px = precio(grupo, fecha)
         spot = float(px["Close"].iloc[-1]) if not px.empty else None
@@ -440,31 +523,38 @@ def procesar(fecha, etiqueta, resumen):
         niv = {}
         for tk in ticks:
             for k, v in niveles(tk, fecha, spot).items():
-                if v is not None and k not in niv: niv[k] = v
+                if v is not None and k not in niv:
+                    niv[k] = v
+        niv = limpiar_niveles(niv, lo, hi, spot or 0)
         vol = vol_extra(ticks[0], fecha)
         net = net_prem(ticks[0], fecha)
         if grupo == "SPX":
             for extra_tk in ticks[1:]:
                 n2 = net_prem(extra_tk, fecha)
-                net["net_call"] += n2["net_call"]; net["net_put"] += n2["net_put"]
+                net["net_call"] += n2["net_call"]
+                net["net_put"] += n2["net_put"]
                 if len(n2["serie"]):
                     net["serie"] = net["serie"].add(n2["serie"], fill_value=0)
         qd30 = qdelta_30m(df)
         sem = semaforo(spot or 0, niv, net["flow_ratio"], qd30, vol, hi, lo, open_px)
         card = grafico(grupo, df, etiqueta, fecha, niv, vol, net, {"qd30": qd30, "sem": sem})
-        if card: resumen.append(card)
+        if card:
+            resumen.append(card)
         if df is not None and not df.empty:
             for _, r in df.nlargest(3, "premium").iterrows():
                 if r["premium"] >= ALERTA_USD:
-                    telegram(f"{grupo} {sem['texto']} {fmt_usd(r['premium'])} {r['contrato']}")
+                    telegram(f"{grupo} {sem['texto']} {etiqueta_print(r, fecha)}")
 
 def main():
     if not API_KEY:
-        print("Falta UW_API_KEY"); return
+        print("Falta UW_API_KEY")
+        return
     modo = os.getenv("MODO_FLUJO", "AMBOS").upper()
     resumen = []
-    if modo in ("AYER", "AMBOS"): procesar(ayer(), "AYER", resumen)
-    if modo in ("HOY", "AMBOS"): procesar(datetime.now(TZ).date(), "HOY", resumen)
+    if modo in ("AYER", "AMBOS"):
+        procesar(ayer(), "AYER", resumen)
+    if modo in ("HOY", "AMBOS"):
+        procesar(datetime.now(TZ).date(), "HOY", resumen)
     with open(os.path.join(CARPETA, "resumen.json"), "w") as f:
         json.dump(resumen, f, default=str)
 
