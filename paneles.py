@@ -4,22 +4,19 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import yfinance as yf
 
 API = os.getenv("UW_API_KEY", "")
 PARES = [("QQQ", "NDX"), ("SPY", "SPX"), ("DIA", "DJX")]
-YMAP = {
-    "QQQ": "QQQ", "NDX": "^NDX",
-    "SPY": "SPY", "SPX": "^GSPC",
-    "DIA": "DIA", "DJX": "^DJI",
-    "GLD": "GLD",
-}
 UW_ALIAS = {"NDX": ["NDX", "QQQ"], "SPX": ["SPX", "SPXW"], "DJX": ["DJX", "DIA"]}
 
 def get(url, params=None):
     try:
-        r = requests.get(url, headers={"Authorization": f"Bearer {API}", "Accept": "application/json"},
-                         params=params or {}, timeout=25)
+        r = requests.get(
+            url,
+            headers={"Authorization": f"Bearer {API}", "Accept": "application/json"},
+            params=params or {},
+            timeout=25,
+        )
         if r.status_code != 200:
             return None
         p = r.json()
@@ -34,18 +31,31 @@ def fnum(x):
         return None
 
 def last_price(tk):
-    try:
-        px = yf.download(YMAP.get(tk, tk), period="5d", interval="5m", progress=False, auto_adjust=True)
-        if px is None or px.empty:
-            return None
-        if isinstance(px.columns, pd.MultiIndex):
-            px.columns = px.columns.get_level_values(0)
-        last = float(px["Close"].dropna().iloc[-1])
-        if tk == "DJX":
-            last = last / 100.0
-        return round(last, 2)
-    except Exception:
-        return None
+    uw = {"NDX": "NDX", "SPX": "SPX", "DJX": "DJX"}.get(tk, tk)
+    raw = get(f"https://api.unusualwhales.com/api/stock/{uw}/ohlc/1m", {"timeframe": "1D", "limit": 3})
+    if isinstance(raw, list) and raw:
+        v = fnum(raw[0].get("close"))
+        if v:
+            if tk == "DJX" and v > 2000:
+                v = v / 100.0
+            return round(v, 2)
+    raw = get(f"https://api.unusualwhales.com/api/stock/{uw}/ohlc/5m", {"timeframe": "1D", "limit": 3})
+    if isinstance(raw, list) and raw:
+        v = fnum(raw[0].get("close"))
+        if v:
+            if tk == "DJX" and v > 2000:
+                v = v / 100.0
+            return round(v, 2)
+    d = get(f"https://api.unusualwhales.com/api/stock/{uw}/quote") or {}
+    if not isinstance(d, dict):
+        d = {}
+    for k in ("close", "last", "last_price", "price", "mark"):
+        v = fnum(d.get(k))
+        if v:
+            if tk == "DJX" and v > 2000:
+                v = v / 100.0
+            return round(v, 2)
+    return None
 
 def cerca(v, spot, pct=0.04):
     if v is None or not spot:
@@ -61,8 +71,10 @@ def cerca(v, spot, pct=0.04):
 def gex_niveles(tk, fecha, spot=None):
     out = {}
     for src in ("oi", "vol"):
-        d = get(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
-                {"date": str(fecha), "source": src})
+        d = get(
+            f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
+            {"date": str(fecha), "source": src},
+        )
         if not isinstance(d, dict):
             continue
         for k in ("call_wall", "put_wall", "gamma_flip", "gamma_magnet"):
@@ -110,7 +122,7 @@ def gex_strikes(tk, fecha, spot=None):
     df.attrs["uw_ticker"] = used
     df["strike"] = pd.to_numeric(df["strike"], errors="coerce")
     df = df.dropna(subset=["strike"])
-    df["call_gex"] = _pick(df, ("call_gamma_oi", "call_gex", "call_gamma", "gex_call", "call_gamma_vol"))
+    df["call_gex"] = _pick(df, ("call_gamma_oi", "call_gex", "call_gamma", "gex_call", "call_gamma_vol", "gamma"))
     df["put_gex"] = _pick(df, ("put_gamma_oi", "put_gex", "put_gamma", "gex_put", "put_gamma_vol")).abs()
     if spot:
         for lo, hi in ((0.985, 1.015), (0.97, 1.03), (0.96, 1.04)):
@@ -164,16 +176,21 @@ def fig_gex(tk, df, niv, spot):
     extra = f"  ({tag})" if tag and tag != tk else ""
     if spot:
         ax.set_ylim(spot * 0.96, spot * 1.04)
-    vacio = (df is None or df.empty or
-             float((df.get("call_gex", pd.Series(dtype=float)).abs()
-                    + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0)
+    vacio = (
+        df is None or df.empty
+        or float((df.get("call_gex", pd.Series(dtype=float)).abs()
+                  + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0
+    )
     if vacio:
         ax.set_title(f"{tk}{extra}  sin GEX cerca del spot", color="#e8eef7", loc="left")
         if spot:
             ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0, label=f"Spot {spot:.2f}")
             ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7)
-        ax.text(0.03, 0.5, "No hay call_gamma_oi / put_gamma_oi ±4% del spot.\nNo se pinta la cadena lejana.",
-                transform=ax.transAxes, color="#8b9bb0", fontsize=8)
+        ax.text(
+            0.03, 0.5,
+            "API sin call_gamma_oi / put_gamma_oi ±4% del spot.\nNo se pinta la cadena lejana.",
+            transform=ax.transAxes, color="#8b9bb0", fontsize=8,
+        )
         return fig
     y = df["strike"].values
     call = df["call_gex"].fillna(0).values
@@ -207,8 +224,12 @@ def fig_oi(tk, o):
     fig, ax = plt.subplots(figsize=(7.2, 2.4), facecolor="#0b1220")
     ax.set_facecolor("#0b1220")
     ax.tick_params(colors="#e8eef7", labelsize=8)
-    vals = [float(o.get("call_open_interest") or 0), float(o.get("put_open_interest") or 0),
-            float(o.get("call_volume") or 0), float(o.get("put_volume") or 0)]
+    vals = [
+        float(o.get("call_open_interest") or 0),
+        float(o.get("put_open_interest") or 0),
+        float(o.get("call_volume") or 0),
+        float(o.get("put_volume") or 0),
+    ]
     ax.bar(["Call OI", "Put OI", "Call vol", "Put vol"], vals, color=["#2ecc71", "#9b59b6", "#5ec8c6", "#e74c3c"])
     ax.set_title(f"{tk}  OI / volumen", color="#e8eef7", loc="left", fontsize=10)
     fig.tight_layout()
