@@ -90,8 +90,13 @@ def gex_strikes(tk, fecha, spot=None):
         return pd.DataFrame()
     df["strike"] = pd.to_numeric(df["strike"], errors="coerce")
     df = df.dropna(subset=["strike"])
-    df["call_gex"] = _pick(df, ("call_gamma_oi", "call_gex", "call_gamma", "call_gamma_vol"))
-    df["put_gex"] = _pick(df, ("put_gamma_oi", "put_gex", "put_gamma", "put_gamma_vol")).abs()
+    df["call_gex"] = _pick(df, (
+        "call_gamma_oi", "call_gex", "call_gamma", "gex_call",
+        "call_gamma_vol", "gamma",
+    ))
+    df["put_gex"] = _pick(df, (
+        "put_gamma_oi", "put_gex", "put_gamma", "gex_put", "put_gamma_vol",
+    )).abs()
     if spot:
         near = df[(df["strike"] >= spot * 0.985) & (df["strike"] <= spot * 1.015)]
         if near.empty or float((near["call_gex"] + near["put_gex"]).abs().sum()) == 0:
@@ -125,12 +130,16 @@ def fig_gex(tk, df, niv, spot):
         s.set_color("#1d2a3d")
     tag = df.attrs.get("uw_ticker") if df is not None else None
     extra = f"  ({tag})" if tag and tag != tk else ""
-    if df is None or df.empty or float((df.get("call_gex", 0).abs() + df.get("put_gex", 0).abs()).sum()) == 0:
-        ax.set_title(f"{tk}{extra}  sin GEX por strike", color="#e8eef7", loc="left")
+    vacio = (
+        df is None or df.empty or
+        float((df.get("call_gex", 0).abs() + df.get("put_gex", 0).abs()).sum()) == 0
+    )
+    if vacio:
+        ax.set_title(f"{tk}{extra}  API sin GEX por strike", color="#e8eef7", loc="left")
         if spot:
             ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0)
-            ax.text(0.02, 0.5, "API sin call_gamma_oi / put_gamma_oi",
-                    transform=ax.transAxes, color="#8b9bb0", fontsize=9)
+        ax.text(0.02, 0.5, "Sin call_gamma_oi / put_gamma_oi cerca del spot",
+                transform=ax.transAxes, color="#8b9bb0", fontsize=9)
         return fig
     y = df["strike"].values
     call = df["call_gex"].fillna(0).values
