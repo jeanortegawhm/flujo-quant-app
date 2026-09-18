@@ -11,23 +11,23 @@ warnings.filterwarnings("ignore")
 API_KEY = os.getenv("UW_API_KEY", "")
 GRUPOS = {"SPX":["SPX","SPXW"],"SPY":["SPY"],"QQQ":["QQQ"],"IWM":["IWM"],"IBIT":["IBIT"],"GLD":["GLD"]}
 YAHOO = {"SPX":"^GSPC","SPY":"SPY","QQQ":"QQQ","IWM":"IWM","IBIT":"IBIT","GLD":"GLD"}
-MIN_BURBUJA = {"SPX":4_000_000,"SPY":1_500_000,"QQQ":1_500_000,"IWM":800_000,"IBIT":600_000,"GLD":800_000}
+MIN_BURBUJA = {"SPX":5_000_000,"SPY":1_200_000,"QQQ":1_200_000,"IWM":800_000,"IBIT":600_000,"GLD":800_000}
 
 MIN_PREMIUM = int(os.getenv("MIN_PREMIUM", "250000"))
 SOLO_0DTE = os.getenv("SOLO_0DTE", "0") == "1"
 UMBRAL_BURBUJA = float(os.getenv("UMBRAL_BURBUJA", "0") or 0)
 ALERTA_USD = float(os.getenv("ALERTA_USD", "2000000"))
 FIG_ANCHO = float(os.getenv("FIG_ANCHO", "12.4"))
-FIG_ALTO = float(os.getenv("FIG_ALTO", "12.2"))
+FIG_ALTO = float(os.getenv("FIG_ALTO", "12.0"))
 FRANJA_ALTO = float(os.getenv("FRANJA_ALTO", "0.28"))
 FRANJA_MIN = float(os.getenv("FRANJA_MIN", "4"))
-PRECIO_ALTO = float(os.getenv("PRECIO_ALTO", "3.5"))
+PRECIO_ALTO = float(os.getenv("PRECIO_ALTO", "3.45"))
 QD_ALTO = float(os.getenv("QD_ALTO", "1.15"))
-TOTAL_ALTO = float(os.getenv("TOTAL_ALTO", "1.15"))
+TOTAL_ALTO = float(os.getenv("TOTAL_ALTO", "1.05"))
 DPI = int(os.getenv("DPI_FIG", "118"))
 MAX_DTE = int(os.getenv("MAX_DTE", "5"))
 
-LIMIT, MAX_ETIQUETAS = 200, 8
+LIMIT, MAX_ETIQUETAS = 200, 6
 TZ, TZ_COL = ZoneInfo("America/New_York"), ZoneInfo("America/Bogota")
 CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
 os.makedirs(CARPETA, exist_ok=True)
@@ -236,7 +236,7 @@ def precio(grupo, fecha):
         px.index = pd.to_datetime(px.index)
         px.index = px.index.tz_localize("America/New_York") if px.index.tz is None else px.index.tz_convert(TZ)
         px = px[(px.index >= a - pd.Timedelta(minutes=5)) & (px.index <= b)]
-        cols = [c for c in ("Open","High","Low","Close") if c in px.columns]
+        cols = [c for c in ("Open", "High", "Low", "Close") if c in px.columns]
         if cols:
             frames.append(px[cols].copy())
     if not frames:
@@ -283,17 +283,41 @@ def semaforo(last, niv, ratio, qd30, vol, hi, lo):
         return {"p1": p1, "p2": p2, "p3": p3, "color": "🔴", "texto": f"{dn}/3 BAJISTA"}
     return {"p1": p1, "p2": p2, "p3": p3, "color": "🟡", "texto": f"{max(up, dn)}/3 NEUTRO"}
 
-def pintar_print(ax, r, y, fecha, etiqueta=True):
-    gold, col = "#d4af37", ("#2ecc71" if r["signo"] > 0 else "#e74c3c")
-    ax.scatter(r["hora"], y, s=200, facecolors="none", edgecolors=gold, lw=1.5, zorder=6)
-    ax.scatter(r["hora"], y, s=26, c=gold, zorder=7)
-    ax.scatter(r["hora"], y, s=34, c=col, marker="^" if r["signo"] > 0 else "v", zorder=8)
-    if etiqueta:
-        txt = f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, fecha)}"
-        if r["estilo"] != "PRT":
-            txt += f" {r['estilo']}"
-        ax.annotate(txt, (r["hora"], y), textcoords="offset points", xytext=(5, 8),
-                    color=gold, fontsize=7.2, fontweight="bold")
+def causa(df, px, niv, last):
+    """No inventa ballenas. Dice si el tape acompaña o si es régimen/otros."""
+    qf = niv.get("QF")
+    if px is None or px.empty:
+        return "Sin precio."
+    t_low = px["Low"].idxmin() if "Low" in px.columns else px["Close"].idxmin()
+    open_px = float(px["Open"].iloc[0]) if "Open" in px.columns else float(px["Close"].iloc[0])
+    lo = float(px["Low"].min()) if "Low" in px.columns else float(px["Close"].min())
+    n_c = n_r = 0.0
+    top_c = top_r = "—"
+    if df is not None and not df.empty:
+        caida, rebote = df[df["hora"] <= t_low], df[df["hora"] > t_low]
+        n_c = float(caida["qdelta"].sum()) if not caida.empty else 0
+        n_r = float(rebote["qdelta"].sum()) if not rebote.empty else 0
+        if not caida.empty:
+            r = caida.loc[caida["premium"].idxmax()]
+            top_c = f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, t_low.date())}"
+        if not rebote.empty:
+            r = rebote.loc[rebote["premium"].idxmax()]
+            top_r = f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, t_low.date())}"
+    gex = "bajo QF (gamma −, el dealer amplifica)" if qf and last < qf else (
+          "sobre QF (gamma +, el dealer frena)" if qf else "sin QF")
+    if abs(n_c) < 400_000 and (open_px - lo) / max(open_px, 1) > 0.002:
+        cae = "Caída SIN tape grande → futuros/cash/noticia + " + gex
+    elif n_c < -400_000:
+        cae = f"Caída ACOMPAÑADA de tape bajista {fmt_usd(n_c)} (top {top_c})"
+    else:
+        cae = f"Caída CON tape mixto/alcista {fmt_usd(n_c)} → no culpes al print ({top_c})"
+    if abs(n_r) < 400_000:
+        sube = "Rebote SIN tape grande → cobertura MM / mean-reversion en " + gex
+    elif n_r > 400_000:
+        sube = f"Rebote ACOMPAÑADO de tape alcista {fmt_usd(n_r)} (top {top_r})"
+    else:
+        sube = f"Rebote CON tape mixto/bajista {fmt_usd(n_r)} → no es el print ({top_r})"
+    return cae + "\n" + sube
 
 def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     px = precio(grupo, fecha)
@@ -306,8 +330,8 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     open_px = float(px["Open"].iloc[0]) if "Open" in px.columns else float(px["Close"].iloc[0])
     lo_s = float(px["Low"].min()) if "Low" in px.columns else float(px["Close"].min())
     hi_s = float(px["High"].max()) if "High" in px.columns else float(px["Close"].max())
-    t_low = px["Low"].idxmin() if "Low" in px.columns else px["Close"].idxmin()
-    umbral = UMBRAL_BURBUJA if UMBRAL_BURBUJA > 0 else MIN_BURBUJA.get(grupo, 1_500_000)
+    umbral = UMBRAL_BURBUJA if UMBRAL_BURBUJA > 0 else MIN_BURBUJA.get(grupo, 1_200_000)
+    nota = causa(df, px, niv, last)
 
     fig = plt.figure(figsize=(FIG_ANCHO, FIG_ALTO), facecolor=bg)
     gs = fig.add_gridspec(4, 1, hspace=0.06,
@@ -328,52 +352,43 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     plt.setp(axA.get_xticklabels(), visible=False)
     plt.setp(axQ.get_xticklabels(), visible=False)
 
-    ax1.axvspan(a0, t_low, color="#e74c3c", alpha=0.07, zorder=0)
-    ax1.axvspan(t_low, b0, color="#2ecc71", alpha=0.06, zorder=0)
-    ax1.plot(px.index, px["Close"], color="#6ea8ff", lw=1.55, zorder=3)
-    ax1.axhline(open_px, color="#8b9bb0", lw=0.8, ls=":", alpha=0.85)
-    ax1.axvline(t_low, color="#f1c40f", lw=0.8, ls="--", alpha=0.7)
+    ax1.plot(px.index, px["Close"], color="#6ea8ff", lw=1.55)
+    ax1.fill_between(px.index, px["Close"], lo_s, color="#6ea8ff", alpha=0.06)
+    ax1.axhline(open_px, color="#8b9bb0", lw=0.7, ls=":", alpha=0.7)
     pad = (hi_s - lo_s) * 0.10 or last * 0.002
     ax1.set_ylim(lo_s - pad, hi_s + pad)
-    ax1.text(a0, open_px, f" OPEN {open_px:.2f}", color="#8b9bb0", fontsize=7, va="bottom")
-    ax1.text(t_low, lo_s, " LOW", color="#f1c40f", fontsize=7, va="top")
 
-    caida = rebote = pd.DataFrame()
-    n_c = n_r = 0.0
+    grandes = pd.DataFrame()
+    neto = 0.0
     if df is not None and not df.empty:
-        caida = df[df["hora"] <= t_low]
-        rebote = df[df["hora"] > t_low]
-        n_c = float(caida["qdelta"].sum()) if not caida.empty else 0
-        n_r = float(rebote["qdelta"].sum()) if not rebote.empty else 0
-        ax1.text(a0, hi_s, f" CAÍDA {fmt_usd(n_c)}", color="#e74c3c", fontsize=8, fontweight="bold", va="top")
-        ax1.text(t_low, hi_s, f"  REBOTE {fmt_usd(n_r)}", color="#2ecc71", fontsize=8, fontweight="bold", va="top")
-
         grandes = df[df["premium"] >= umbral]
-        tops = []
-        if not caida.empty:
-            tops.append(caida.nlargest(3, "premium"))
-        if not rebote.empty:
-            tops.append(rebote.nlargest(3, "premium"))
-        if not grandes.empty:
-            tops.append(grandes)
-        lab = pd.concat(tops).drop_duplicates(["hora", "premium"]) if tops else grandes
-        ya = set()
-        for _, r in lab.iterrows():
+        if grandes.empty:
+            grandes = df.nlargest(5, "premium")
+        top = grandes.nlargest(MAX_ETIQUETAS, "premium")
+        for _, r in grandes.iterrows():
             y = r["spot"] if r["spot"] else last
             if not (lo_s - pad <= y <= hi_s + pad):
                 y = last
-            key = (r["hora"], r["premium"])
-            pintar_print(ax1, r, y, fecha, etiqueta=key not in ya and len(ya) < MAX_ETIQUETAS)
-            ya.add(key)
-
-        # TOTAL: todos los prints (gris) + grandes (oro)
-        axT.bar(df["hora"], df["premium"] / 1e6, width=0.0022, color="#6b7280", alpha=0.45)
+            col = "#2ecc71" if r["signo"] > 0 else "#e74c3c"
+            ax1.scatter(r["hora"], y, s=210, facecolors="none", edgecolors=gold, lw=1.6, zorder=6)
+            ax1.scatter(r["hora"], y, s=28, c=gold, zorder=7)
+            ax1.scatter(r["hora"], y, s=36, c=col, marker="^" if r["signo"] > 0 else "v", zorder=8)
+        for _, r in top.iterrows():
+            y = r["spot"] if r["spot"] else last
+            if not (lo_s - pad <= y <= hi_s + pad):
+                y = last
+            txt = f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, fecha)}"
+            if r["estilo"] != "PRT":
+                txt += f" {r['estilo']}"
+            ax1.annotate(txt, (r["hora"], y), textcoords="offset points", xytext=(6, 8),
+                         color=gold, fontsize=7.5, fontweight="bold")
+        neto = float(df["qdelta"].sum())
+        axT.bar(df["hora"], df["premium"] / 1e6, width=0.0022, color="#5b6573", alpha=0.4)
         if not grandes.empty:
             axT.bar(grandes["hora"], grandes["premium"] / 1e6, width=0.003, color=gold, alpha=0.95)
-        for _, r in lab.nlargest(5, "premium").iterrows():
-            axT.annotate(fmt_usd(r["premium"]), (r["hora"], r["premium"] / 1e6),
-                         textcoords="offset points", xytext=(0, 4), ha="center", color=gold, fontsize=7)
-
+            for _, r in top.head(4).iterrows():
+                axT.annotate(fmt_usd(r["premium"]), (r["hora"], r["premium"] / 1e6),
+                             textcoords="offset points", xytext=(0, 4), ha="center", color=gold, fontsize=7)
         qd = df.set_index("hora")["qdelta"].resample("5min").sum().fillna(0)
         axQ.bar(qd.index, qd.values / 1e6, width=0.0026,
                 color=["#2ecc71" if v >= 0 else "#e74c3c" for v in qd.values])
@@ -388,6 +403,9 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     ax1.text(1.0, last, f" {last:,.2f} ", transform=ax1.get_yaxis_transform(),
              color="white", fontsize=8, va="center", ha="left",
              bbox=dict(fc="#3d5afe", ec="none", pad=0.22))
+    ax1.text(0.01, 0.02, nota, transform=ax1.transAxes, color="#d7e3f4", fontsize=7.2,
+             va="bottom", ha="left", linespacing=1.35,
+             bbox=dict(fc="#121b2c", ec="#2a3b55", pad=4, alpha=0.92))
     ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
 
     serie = net.get("serie", pd.Series(dtype=float))
@@ -413,12 +431,12 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     iv = f" IV {vol['iv']:.1f}%" if vol.get("iv") else ""
     ax1.set_title(
         f"{grupo} {etiqueta} {fecha}  |  {sem['color']} {sem['texto']}  |  "
-        f"caída {fmt_usd(n_c)}  rebote {fmt_usd(n_r)}  30m {fmt_usd(qd30)}  flow {ratio:.2f}{iv}",
-        color=fg, loc="left", fontsize=9.5, pad=6,
+        f"net {fmt_usd(neto)}  30m {fmt_usd(qd30)}  flow {ratio:.2f}{iv}",
+        color=fg, loc="left", fontsize=10, pad=6,
     )
     fig.text(0.01, 0.008,
              f"NY {datetime.now(TZ):%H:%M}  COL {datetime.now(TZ_COL):%H:%M}  "
-             f"rojo=OPEN→LOW  verde=LOW→cierre  |  gris=prints chicos  oro=grandes  |  print ≠ dirección ETF",
+             f"anillo=prima  |  print ≠ dirección ETF",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
     ruta = os.path.join(CARPETA, f"{grupo}_{etiqueta}_{fecha}_{datetime.now(TZ):%H%M%S}.png")
@@ -429,10 +447,10 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         "ticker": grupo, "modo": etiqueta, "fecha": str(fecha),
         "semaforo": sem["texto"], "color": sem["color"],
         "p1": sem["p1"], "p2": sem["p2"], "p3": sem["p3"],
-        "qdelta": n_c + n_r, "qd30": qd30, "flow_ratio": ratio,
+        "qdelta": neto, "qd30": qd30, "flow_ratio": ratio,
         "iv": vol.get("iv"), "ivp": vol.get("ivp"), "imp_move_pct": vol.get("imp_move_pct"),
         "cw": niv.get("CW"), "pw": niv.get("PW"), "qf": niv.get("QF"),
-        "caida": n_c, "rebote": n_r,
+        "nota": nota,
     }
 
 def procesar(fecha, etiqueta, resumen):
