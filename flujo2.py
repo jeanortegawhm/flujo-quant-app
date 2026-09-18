@@ -9,9 +9,15 @@ from zoneinfo import ZoneInfo
 warnings.filterwarnings("ignore")
 
 API_KEY = os.getenv("UW_API_KEY", "")
-GRUPOS = {"SPX":["SPX","SPXW"],"SPY":["SPY"],"QQQ":["QQQ"],"IWM":["IWM"],"IBIT":["IBIT"],"GLD":["GLD"]}
-YAHOO = {"SPX":"^GSPC","SPY":"SPY","QQQ":"QQQ","IWM":"IWM","IBIT":"IBIT","GLD":"GLD"}
-MIN_BURBUJA = {"SPX":6_000_000,"SPY":1_200_000,"QQQ":1_200_000,"IWM":800_000,"IBIT":600_000,"GLD":800_000}
+GRUPOS = {
+    "SPX": ["SPX", "SPXW"],
+    "SPY": ["SPY"],
+    "QQQ": ["QQQ"],
+    "DIA": ["DIA"],
+    "GLD": ["GLD"],
+}
+YAHOO = {"SPX": "^GSPC", "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "GLD": "GLD"}
+MIN_BURBUJA = {"SPX": 6_000_000, "SPY": 1_200_000, "QQQ": 1_200_000, "DIA": 800_000, "GLD": 800_000}
 
 MIN_PREMIUM = int(os.getenv("MIN_PREMIUM", "250000"))
 SOLO_0DTE = os.getenv("SOLO_0DTE", "0") == "1"
