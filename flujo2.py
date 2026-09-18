@@ -9,9 +9,27 @@ from zoneinfo import ZoneInfo
 warnings.filterwarnings("ignore")
 
 API_KEY = os.getenv("UW_API_KEY", "")
-GRUPOS = {"SPX":["SPX","SPXW"],"SPY":["SPY"],"QQQ":["QQQ"],"IWM":["IWM"],"IBIT":["IBIT"],"GLD":["GLD"]}
-YAHOO = {"SPX":"^GSPC","SPY":"SPY","QQQ":"QQQ","IWM":"IWM","IBIT":"IBIT","GLD":"GLD"}
-MIN_BURBUJA = {"SPX":6_000_000,"SPY":1_200_000,"QQQ":1_200_000,"IWM":800_000,"IBIT":600_000,"GLD":800_000}
+GRUPOS = {
+    "SPX": ["SPX", "SPXW"],
+    "SPY": ["SPY"],
+    "QQQ": ["QQQ"],
+    "DIA": ["DIA"],
+    "GLD": ["GLD"],
+}
+YAHOO = {"SPX": "^GSPC", "SPY": "SPY", "QQQ": "QQQ", "DIA": "DIA", "GLD": "GLD"}
+MIN_PREM = {
+    "SPX": 500_000, "SPXW": 500_000,
+    "SPY": 250_000, "QQQ": 250_000,
+    "DIA": 80_000, "GLD": 120_000,
+}
+MAX_DTE_MAP = {
+    "SPX": 5, "SPXW": 5, "SPY": 7, "QQQ": 7,
+    "DIA": 45, "GLD": 14,
+}
+MIN_BURBUJA = {
+    "SPX": 6_000_000, "SPY": 1_200_000, "QQQ": 1_200_000,
+    "DIA": 250_000, "GLD": 300_000,
+}
 
 MIN_PREMIUM = int(os.getenv("MIN_PREMIUM", "250000"))
 SOLO_0DTE = os.getenv("SOLO_0DTE", "0") == "1"
@@ -31,7 +49,7 @@ TZ, TZ_COL = ZoneInfo("America/New_York"), ZoneInfo("America/Bogota")
 CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
 os.makedirs(CARPETA, exist_ok=True)
 headers = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
-BLOQUES = [(9,30,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(15,15,16,5)]
+BLOQUES = [(9,25,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(15,15,16,5)]
 
 def ayer():
     d = datetime.now(TZ).date() - timedelta(days=1)
@@ -225,6 +243,10 @@ def procesar_df(data, ticker):
     return df.dropna(subset=["hora"])[df["premium"] > 0]
 
 def tape(fecha, ticker):
+    prem = MIN_PREM.get(ticker, MIN_PREMIUM)
+    env_p = int(os.getenv("MIN_PREMIUM", "0") or 0)
+    if env_p and env_p < prem:
+        prem = env_p
     out = []
     for h1, m1, h2, m2 in BLOQUES:
         a = datetime(fecha.year, fecha.month, fecha.day, h1, m1, tzinfo=TZ).astimezone(ZoneInfo("UTC"))
@@ -233,10 +255,10 @@ def tape(fecha, ticker):
             "ticker_symbol": ticker,
             "newer_than": a.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "older_than": b.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "min_premium": MIN_PREMIUM, "limit": LIMIT,
+            "min_premium": prem, "limit": LIMIT,
         })
         data = data if isinstance(data, list) else []
-        print(f"  {ticker} {h1:02d}:{m1:02d}-{h2:02d}:{m2:02d}: {len(data)}")
+        print(f"  {ticker} {h1:02d}:{m1:02d}-{h2:02d}:{m2:02d}: {len(data)} min={prem}")
         out.extend(data)
         time.sleep(0.12)
     if not out:
@@ -244,13 +266,15 @@ def tape(fecha, ticker):
     df = procesar_df(out, ticker).drop_duplicates(["hora", "premium"]).sort_values("hora")
     a, b = sesion(fecha)
     df = df[(df["hora"] >= a) & (df["hora"] <= b)]
+    max_dte = MAX_DTE_MAP.get(ticker, MAX_DTE)
     if "expiry" in df.columns:
-        lim = fecha + timedelta(days=MAX_DTE)
-        mask = df["expiry"].isna() | (df["expiry"] <= lim)
-        if mask.any():
-            df = df[mask]
+        lim = fecha + timedelta(days=max_dte)
+        near = df[df["expiry"].notna() & (df["expiry"] <= lim)]
+        df = near if not near.empty else df.nlargest(min(8, len(df)), "premium")
     if SOLO_0DTE and "expiry" in df.columns:
-        df = df[df["expiry"].isin([fecha, fecha + timedelta(days=1)])]
+        d0 = df[df["expiry"].isin([fecha, fecha + timedelta(days=1)])]
+        if not d0.empty:
+            df = d0
     return df
 
 def precio(grupo, fecha):
@@ -264,7 +288,7 @@ def precio(grupo, fecha):
             px.columns = px.columns.get_level_values(0)
         px.index = pd.to_datetime(px.index)
         px.index = px.index.tz_localize("America/New_York") if px.index.tz is None else px.index.tz_convert(TZ)
-        px = px[(px.index >= a - pd.Timedelta(minutes=5)) & (px.index <= b)]
+        px = px[(px.index >= a - pd.Timedelta(minutes=10)) & (px.index <= b)]
         cols = [c for c in ("Open","High","Low","Close") if c in px.columns]
         if cols:
             frames.append(px[cols].copy())
@@ -276,7 +300,17 @@ def precio(grupo, fecha):
         miss = extra.index.difference(px.index)
         if len(miss):
             px = pd.concat([px, extra.loc[miss]]).sort_index()
-    return px[~px.index.duplicated()].sort_index()
+    px = px[~px.index.duplicated()].sort_index()
+    px = px[px.index <= b]
+    if px.empty:
+        return px
+    if px.index[0] > a:
+        first = px.iloc[[0]].copy()
+        first.index = pd.DatetimeIndex([a])
+        if "Open" in first.columns:
+            first.loc[a, "Open"] = float(px["Open"].iloc[0])
+        px = pd.concat([first, px]).sort_index()
+    return px
 
 def qdelta_30m(df):
     if df is None or df.empty:
@@ -300,9 +334,9 @@ def semaforo(last, niv, ratio, qd30, vol, hi, lo, open_px):
     if pw and last < pw:
         p1 = -1
     p2 = 1 if qd30 > 250_000 else -1 if qd30 < -250_000 else 0
-    if ratio >= 1.25 and p2 >= 0:
+    if ratio >= 1.25:
         p2 = 1
-    if ratio <= 0.8 and p2 <= 0:
+    if ratio <= 0.8:
         p2 = -1
     imp = vol.get("imp_move_pct") or 0
     ivp = vol.get("ivp") or 50
@@ -478,17 +512,18 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     axT.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=TZ))
 
     ratio = float(net.get("flow_ratio", 1) or 1)
-    sem = extra.get("sem", {"texto": "-", "color": "Y"})
+    sem = extra.get("sem", {"texto": "-", "color": "Y", "p1": 0, "p2": 0, "p3": 0})
     qd30 = extra.get("qd30", 0)
-    iv = f"  |  IV {vol['iv']:.1f}%" if vol.get("iv") else ""
+    iv = f"   ·   IV {vol['iv']:.1f}%" if vol.get("iv") else ""
     ax1.set_title(
-        f"{grupo} {etiqueta} {fecha}  |  {sem['color']} {sem['texto']}  |  "
-        f"net {fmt_usd(neto)}  |  30m {fmt_usd(qd30)}  |  flow {ratio:.2f}{iv}",
+        f"{grupo} {etiqueta} {fecha}   |   {sem['color']} {sem['texto']}   |   "
+        f"net {fmt_usd(neto)}   ·   30m {fmt_usd(qd30)}   ·   flow {ratio:.2f}{iv}",
         color=fg, loc="left", fontsize=10, pad=6,
     )
     fig.text(0.01, 0.008,
              f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
-             f"C+/P+ verde = call compra o put venta  |  C-/P- rojo = call venta o put compra  |  suma QD != print",
+             f"9:30-16:00  |  C+/P+ verde = call compra o put venta  |  "
+             f"C-/P- rojo = call venta o put compra  |  suma QD != print",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
     ruta = os.path.join(CARPETA, f"{grupo}_{etiqueta}_{fecha}_{datetime.now(TZ):%H%M%S}.png")
