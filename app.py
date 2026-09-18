@@ -12,18 +12,18 @@ CARPETA.mkdir(exist_ok=True)
 st.markdown("""
 <style>
 .stApp { background:#0b1220; color:#e8eef7; }
-h1, h2, h3 { letter-spacing:.02em; }
+[data-testid="stHeader"] { background:#0b1220; }
 .q-hero {
-  background: linear-gradient(90deg,#0b1220 0%,#121b2c 55%,#0b1220 100%);
-  border:1px solid #243044; border-radius:14px; padding:18px 22px 16px; margin-bottom:12px;
+  background:#121b2c; border:1px solid #2a3b55; border-radius:14px;
+  padding:16px 20px; margin:0 0 14px 0;
 }
-.q-kicker { color:#d4af37; font-size:12px; letter-spacing:.22em; font-weight:700; }
-.q-title { color:#e8eef7; font-size:34px; font-weight:750; margin:2px 0 4px; }
+.q-kicker { color:#d4af37; font-size:11px; letter-spacing:.24em; font-weight:700; }
+.q-title { font-size:32px; font-weight:750; color:#e8eef7; margin:2px 0 4px; }
 .q-title span { color:#5ec8c6; }
-.q-sub { color:#8b9bb0; font-size:14px; }
+.q-sub { color:#8b9bb0; font-size:13px; }
 .q-box {
-  background:#121b2c; border:1px solid #243044; border-radius:12px;
-  padding:12px 14px; margin:8px 0 14px; color:#c9d6e8; font-size:14px; line-height:1.45;
+  background:#121b2c; border:1px solid #2a3b55; border-radius:12px;
+  padding:12px 14px; margin:8px 0 14px; color:#c9d6e8; font-size:13.5px; line-height:1.5;
 }
 .q-box b { color:#d4af37; }
 .q-box i { color:#5ec8c6; font-style:normal; }
@@ -36,7 +36,7 @@ def secreto(n, d=""):
     except Exception:
         return os.getenv(n, d)
 
-def fmt_num(x, dec=0):
+def fmt_num(x):
     try:
         x = float(x)
     except Exception:
@@ -44,7 +44,7 @@ def fmt_num(x, dec=0):
     if abs(x) >= 1e9: return f"${x/1e9:.2f}B"
     if abs(x) >= 1e6: return f"${x/1e6:.1f}M"
     if abs(x) >= 1000: return f"${x:,.0f}"
-    return f"{x:.{dec}f}"
+    return str(x)
 
 if st.sidebar.text_input("Clave", type="password") != secreto("APP_PASSWORD", "cambiaesta"):
     st.stop()
@@ -58,10 +58,8 @@ fig_alto = st.sidebar.slider("Alto del gráfico", 10.0, 16.0, 12.0, 0.2)
 def correr(nombre, modo):
     script = HOME / nombre
     if not script.exists():
-        st.error("Falta " + script.name)
-        return
-    box = st.empty()
-    box.info(f"{nombre} · {modo}")
+        st.error("Falta " + script.name); return
+    box = st.empty(); box.info(f"{nombre} · {modo}")
     env = os.environ.copy()
     env["UW_API_KEY"] = secreto("UW_API_KEY", "")
     env["TELEGRAM_BOT_TOKEN"] = secreto("TELEGRAM_BOT_TOKEN", "")
@@ -76,16 +74,12 @@ def correr(nombre, modo):
     env["FRANJA_MIN"] = str(franja_min)
     env["FIG_ANCHO"] = str(fig_ancho)
     env["FIG_ALTO"] = str(fig_alto)
-    p = subprocess.run(
-        [sys.executable, "-u", str(script)],
-        capture_output=True, text=True, cwd=str(HOME), env=env,
-    )
+    p = subprocess.run([sys.executable, "-u", str(script)],
+                       capture_output=True, text=True, cwd=str(HOME), env=env)
     box.empty()
     st.success("Listo") if p.returncode == 0 else st.error("Error")
-    if p.stdout:
-        st.text_area("Salida", p.stdout[-3500:], height=160)
-    if p.stderr:
-        st.text_area("Avisos", p.stderr[-1200:], height=90)
+    if p.stdout: st.text_area("Salida", p.stdout[-3500:], height=160)
+    if p.stderr: st.text_area("Avisos", p.stderr[-1200:], height=90)
 
 st.markdown("""
 <div class="q-hero">
@@ -108,15 +102,11 @@ t1, t2, t3, t4, t5 = st.tabs(["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "
 with t1:
     st.markdown("""
     <div class="q-box">
-    <b>Qué estás viendo.</b> El gráfico tipo Quantium / Gregory: precio, anillos de prima,
-    franja de agresor, QD notional y TOTAL. No es una señal de compra/venta.<br><br>
-    <b>Cómo leerlo.</b><br>
-    • <i>Anillo oro</i> = print grande (prima). Triángulo verde = sesgo call/compra. Rojo = put/venta.<br>
-    • <i>CW / PW / QF</i> = call wall, put wall, gamma flip. Debajo del QF el dealer suele amplificar.<br>
-    • <i>Agresor</i> oro/teal = más prima call neta. Morado = más put.<br>
-    • <i>QD</i> verde/rojo = prima firmada cada 5 min. <i>TOTAL</i> oro = tamaño del print.<br>
-    • Recuadro abajo a la izquierda: si el tape <b>acompañó</b> la mecha o si fue GEX / futuros / hueco.<br><br>
-    <b>Regla.</b> Print ≠ dirección del ETF. Un put en GLD o un call vendido en IBIT no mandan el spot.
+    <b>Qué ves.</b> Precio + anillos de prima + agresor + QD + TOTAL. No es una orden.<br>
+    <b>Cómo leer.</b> Anillo oro = print grande. <i>Triángulo verde</i> = call comprada o put vendida.
+    <i>Triángulo rojo</i> = put comprada o call vendida. CW/PW/QF = paredes y flip.
+    Debajo del QF el dealer suele amplificar. El recuadro dice si el tape acompañó o si fue GEX/futuros.
+    QD suma no es un print: si dice “suma QD 11.6M” no busques un anillo de 11.6M.
     </div>
     """, unsafe_allow_html=True)
     f1, f2, f3, f4b = st.columns(4)
@@ -146,10 +136,9 @@ with t1:
 with t2:
     st.markdown("""
     <div class="q-box">
-    <b>Qué estás viendo.</b> Posicionamiento de varios días para swing: paredes, QF y flujo neto,
-    no el tape de 1 minuto.<br><br>
-    <b>Cómo leerlo.</b> Úsalo para el sesgo de 2–10 días. Si el intradía pelea con el swing,
-    manda el intradía solo dentro del día. No abras swing por un print 0DTE.
+    <b>Qué ves.</b> Sesgo de varios días (paredes + QF + flujo neto), no el tape de 1 minuto.<br>
+    <b>Cómo leer.</b> Sirve para swing 2–10 días. Un print 0DTE no abre swing. Si el intradía pelea
+    con este panel, el intradía manda solo dentro del día.
     </div>
     """, unsafe_allow_html=True)
     if st.button("Generar Swing", width="stretch"):
@@ -161,14 +150,9 @@ with t2:
 with t3:
     st.markdown("""
     <div class="q-box">
-    <b>Qué estás viendo.</b> Resumen de todos los tickers después de correr Flujo.
-    Cards con semáforo 3 pilares + el PNG.<br><br>
-    <b>Cómo leerlo.</b><br>
-    • <i>P1</i> posicionamiento (precio vs QF / PW / CW).<br>
-    • <i>P2</i> flujo de los últimos 30 min + flow ratio.<br>
-    • <i>P3</i> volatilidad / implied move.<br>
-    • Operable solo con <b>2 de 3</b>. 1/3 = no hay tesis, solo ruido.<br>
-    • IVP alto + debajo del QF = rango amplio, no persigas.
+    <b>Qué ves.</b> Cards de todos los tickers + PNGs después de correr Flujo.<br>
+    <b>Cómo leer.</b> P1 precio vs QF/PW/CW. P2 flujo 30 min. P3 volatilidad.
+    Operable con 2 de 3. 1/3 = ruido. IVP alto + bajo QF = no persigas.
     </div>
     """, unsafe_allow_html=True)
     res = CARPETA / "resumen.json"
@@ -180,21 +164,15 @@ with t3:
         cols = st.columns(3)
         for i, row in enumerate(data[-12:]):
             with cols[i % 3]:
-                st.markdown(f"**{row.get('color', '')} {row.get('ticker')} {row.get('modo')}**")
+                st.markdown(f"**{row.get('color','')} {row.get('ticker')} {row.get('modo')}**")
                 st.caption(row.get("semaforo", "—"))
                 st.write(f"P1 {row.get('p1')} · P2 {row.get('p2')} · P3 {row.get('p3')}")
                 st.write(f"CW {row.get('cw') or '—'} · PW {row.get('pw') or '—'} · QF {row.get('qf') or '—'}")
                 st.write(f"qΔ {fmt_num(row.get('qdelta'))} · 30m {fmt_num(row.get('qd30'))}")
-                ivp, ivr, im = row.get("ivp"), row.get("ivr"), row.get("imp_move_pct")
-                ivp_txt = f"{float(ivp):.0f}" if ivp is not None else "—"
-                ivr_txt = f"{float(ivr):.0f}" if ivr is not None else "—"
-                im_txt = f"{float(im)*100:.2f}%" if im else "—"
-                st.write(f"IVP {ivp_txt} · IVR {ivr_txt} · IM {im_txt}")
-                st.write(f"flow {float(row.get('flow_ratio') or 0):.2f}")
                 if row.get("nota"):
                     st.caption(row.get("nota"))
     else:
-        st.info("Aún no hay resumen.json. Corre Solo AYER o Solo HOY.")
+        st.info("Corre Solo AYER o Solo HOY para crear resumen.json")
     pngs = sorted(CARPETA.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
     for p in pngs[:8]:
         if p.stat().st_size <= 3_500_000:
@@ -203,22 +181,22 @@ with t3:
 with t4:
     st.markdown("""
     <div class="q-box">
-    <b>Qué estás viendo.</b> El mismo mercado en <i>dos libros</i>: QQQ vs NDX, SPY vs SPX, IWM vs RUT.
-    Hunab / Angel: más niveles no es más claridad. A veces el ETF muestra la zona y el índice no.<br><br>
-    <b>Cómo leerlo.</b> Si QQQ arma pared debajo del precio y NDX no, esa zona es filtro, no orden.
-    Confirma después en Flujo (print) o en Dark pool. No compres el nivel solo porque existe.
+    <b>Qué ves.</b> El mismo mercado en dos libros (QQQ/NDX, SPY/SPX, IWM/RUT).
+    Más niveles no es más claridad.<br>
+    <b>Cómo leer.</b> El zoom usa el <i>precio spot real</i>, no el QF. Si QQQ arma 720 y NDX no,
+    esa zona es filtro. Confirma en Flujo o Dark pool. Las escalas $ no se comparan entre paneles.
     </div>
     """, unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
     try:
-        from paneles import PARES, gex_niveles, gex_strikes, fig_gex
+        from paneles import PARES, gex_niveles, gex_strikes, fig_gex, last_price
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
         for par_a, par_b in PARES:
             c1, c2 = st.columns(2)
             for col, tk in ((c1, par_a), (c2, par_b)):
                 with col:
                     niv = gex_niveles(tk, hoy)
-                    spot = niv.get("gamma_flip") or niv.get("call_wall")
+                    spot = last_price(tk)
                     df = gex_strikes(tk, hoy, spot)
                     st.pyplot(fig_gex(tk, df, niv, spot), width="stretch")
     except Exception as e:
@@ -227,29 +205,27 @@ with t4:
 with t5:
     st.markdown("""
     <div class="q-box">
-    <b>Qué estás viendo.</b> Confirmación, no el tape. Perfil GEX por strike (Gexbot/SpotGamma),
-    OI call vs put, y dark pool agrupado por precio.<br><br>
-    <b>Cómo leerlo.</b><br>
-    • Barras <i>verdes</i> = call GEX. <i>Moradas</i> = put GEX. El QF es donde cambia el régimen.<br>
-    • Un PW lejos (GLD 200) se ignora en el zoom; no estira el eje.<br>
-    • OI alto en puts no es automáticamente bajista: puede ser hedge de un long de spot.<br>
-    • Dark pool = zonas donde cruzó size opaco. Es mapa de liquidez, no dirección.
+    <b>Qué ves.</b> Confirmación: GEX por strike, OI y dark pool. No es el tape.<br>
+    <b>Cómo leer.</b> Verde = call GEX. Morado = put GEX. QF = cambio de régimen.
+    OI put alto puede ser hedge. Dark pool = liquidez, no dirección.
+    El zoom va centrado en el último precio, no en el flip.
     </div>
     """, unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
-    tk = st.selectbox("Ticker", ["QQQ", "NDX", "SPY", "SPX", "IWM", "IBIT", "GLD"])
+    tk = st.selectbox("Ticker", ["QQQ","NDX","SPY","SPX","IWM","RUT","IBIT","GLD"])
     try:
-        from paneles import gex_niveles, gex_strikes, oi_vol, darkpool, fig_gex, fig_oi, fig_dp
+        from paneles import gex_niveles, gex_strikes, oi_vol, darkpool, fig_gex, fig_oi, fig_dp, last_price
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
         g = gex_niveles(tk, hoy)
         o = oi_vol(tk, hoy)
-        spot = g.get("gamma_flip") or g.get("call_wall")
+        spot = last_price(tk)
         df = gex_strikes(tk, hoy, spot)
         a, b, c, d = st.columns(4)
         a.metric("Call wall", str(g.get("call_wall", "—")))
         b.metric("Put wall", str(g.get("put_wall", "—")))
         c.metric("Gamma flip", str(g.get("gamma_flip", "—")))
         d.metric("Magnet", str(g.get("gamma_magnet", "—")))
+        st.caption(f"Spot real: {spot if spot else '—'}")
         e, f, g2, h = st.columns(4)
         e.metric("Call OI", f"{float(o.get('call_open_interest') or 0):,.0f}")
         f.metric("Put OI", f"{float(o.get('put_open_interest') or 0):,.0f}")
