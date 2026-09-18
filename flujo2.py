@@ -49,7 +49,7 @@ TZ, TZ_COL = ZoneInfo("America/New_York"), ZoneInfo("America/Bogota")
 CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
 os.makedirs(CARPETA, exist_ok=True)
 headers = {"Authorization": f"Bearer {API_KEY}", "Accept": "application/json"}
-BLOQUES = [(9,25,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(15,15,16,5)]
+BLOQUES = [(9, 25, 10, 15), (10, 15, 11, 15), (11, 15, 12, 30), (12, 30, 14, 0), (14, 0, 15, 15), (15, 15, 16, 5)]
 
 def ayer():
     d = datetime.now(TZ).date() - timedelta(days=1)
@@ -62,10 +62,15 @@ def sesion(fecha):
             datetime(fecha.year, fecha.month, fecha.day, 16, 0, tzinfo=TZ))
 
 def fmt_usd(x):
-    x = float(x or 0); s = "-" if x < 0 else ""; x = abs(x)
-    if x >= 1e9: return f"{s}${x/1e9:.2f}B"
-    if x >= 1e6: return f"{s}${x/1e6:.1f}M"
-    if x >= 1e3: return f"{s}${x/1e3:.0f}k"
+    x = float(x or 0)
+    s = "-" if x < 0 else ""
+    x = abs(x)
+    if x >= 1e9:
+        return f"{s}${x/1e9:.2f}B"
+    if x >= 1e6:
+        return f"{s}${x/1e6:.1f}M"
+    if x >= 1e3:
+        return f"{s}${x/1e3:.0f}k"
     return f"{s}${x:,.0f}"
 
 def num(x):
@@ -85,7 +90,7 @@ def get_json(url, params=None):
         return None
 
 def telegram(msg):
-    tok, chat = os.getenv("TELEGRAM_BOT_TOKEN",""), os.getenv("TELEGRAM_CHAT_ID","")
+    tok, chat = os.getenv("TELEGRAM_BOT_TOKEN", ""), os.getenv("TELEGRAM_CHAT_ID", "")
     if not tok or not chat:
         return
     try:
@@ -107,8 +112,10 @@ def dte_de(row, fecha):
 
 def estilo(row):
     tags = str(row.get("tags", "") or "").lower()
-    if "sweep" in tags: return "SWP"
-    if "block" in tags: return "BLK"
+    if "sweep" in tags:
+        return "SWP"
+    if "block" in tags:
+        return "BLK"
     return "PRT"
 
 def nivel_util(v, lo, hi, last, max_pct=0.015):
@@ -136,11 +143,16 @@ def limpiar_niveles(niv, lo, hi, last):
     return out
 
 def etiqueta_print(r, fecha):
-    if r["contrato"] == "C" and r["signo"] > 0: acc = "C+"
-    elif r["contrato"] == "C" and r["signo"] < 0: acc = "C-"
-    elif r["contrato"] == "P" and r["signo"] < 0: acc = "P-"
-    elif r["contrato"] == "P" and r["signo"] > 0: acc = "P+"
-    else: acc = str(r.get("contrato") or "")
+    if r["contrato"] == "C" and r["signo"] > 0:
+        acc = "C+"
+    elif r["contrato"] == "C" and r["signo"] < 0:
+        acc = "C-"
+    elif r["contrato"] == "P" and r["signo"] < 0:
+        acc = "P-"
+    elif r["contrato"] == "P" and r["signo"] > 0:
+        acc = "P+"
+    else:
+        acc = str(r.get("contrato") or "")
     txt = f"{fmt_usd(r['premium'])} {acc}{dte_de(r, fecha)}"
     if r.get("estilo") and r["estilo"] != "PRT":
         txt += f" {r['estilo']}"
@@ -153,11 +165,11 @@ def niveles(tk, fecha, spot=None):
                      {"date": str(fecha), "source": src})
         if not isinstance(d, dict):
             continue
-        for k, c in (("CW","call_wall"),("PW","put_wall"),("QF","gamma_flip"),("MAGNET","gamma_magnet")):
+        for k, c in (("CW", "call_wall"), ("PW", "put_wall"), ("QF", "gamma_flip"), ("MAGNET", "gamma_magnet")):
             v = num(d.get(c))
             if v is not None:
                 raw[f"{k}_{src.upper()}"] = v
-    return {k: raw.get(f"{k}_OI") or raw.get(f"{k}_VOL") for k in ("CW","PW","QF","MAGNET")}
+    return {k: raw.get(f"{k}_OI") or raw.get(f"{k}_VOL") for k in ("CW", "PW", "QF", "MAGNET")}
 
 def vol_extra(tk, fecha):
     out = {"iv": None, "ivp": None, "ivr": None, "imp_move_pct": None}
@@ -190,8 +202,7 @@ def net_prem(tk, fecha):
     ratio = bull / bear if bear else (2 if bull else 1)
     mins = max(int(FRANJA_MIN), 5)
     a, b = sesion(fecha)
-    serie = (df.dropna(subset=["hora"]).set_index("hora")["agres"]
-             .resample(f"{mins}min").sum().fillna(0))
+    serie = (df.dropna(subset=["hora"]).set_index("hora")["agres"].resample(f"{mins}min").sum().fillna(0))
     return {"net_call": tc, "net_put": tp, "flow_ratio": ratio,
             "serie": serie[(serie.index >= a) & (serie.index <= b)]}
 
@@ -232,11 +243,16 @@ def procesar_df(data, ticker):
     df["estilo"] = df.apply(estilo, axis=1)
     sg = []
     for _, r in df.iterrows():
-        if r["lado"] == "COMPRA" and r["contrato"] == "C": sg.append(1)
-        elif r["lado"] == "COMPRA" and r["contrato"] == "P": sg.append(-1)
-        elif r["lado"] == "VENTA" and r["contrato"] == "C": sg.append(-1)
-        elif r["lado"] == "VENTA" and r["contrato"] == "P": sg.append(1)
-        else: sg.append(0)
+        if r["lado"] == "COMPRA" and r["contrato"] == "C":
+            sg.append(1)
+        elif r["lado"] == "COMPRA" and r["contrato"] == "P":
+            sg.append(-1)
+        elif r["lado"] == "VENTA" and r["contrato"] == "C":
+            sg.append(-1)
+        elif r["lado"] == "VENTA" and r["contrato"] == "P":
+            sg.append(1)
+        else:
+            sg.append(0)
     df["signo"] = sg
     df["qdelta"] = df["signo"] * df["premium"]
     df["origen"] = ticker
@@ -255,7 +271,8 @@ def tape(fecha, ticker):
             "ticker_symbol": ticker,
             "newer_than": a.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "older_than": b.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "min_premium": prem, "limit": LIMIT,
+            "min_premium": prem,
+            "limit": LIMIT,
         })
         data = data if isinstance(data, list) else []
         print(f"  {ticker} {h1:02d}:{m1:02d}-{h2:02d}:{m2:02d}: {len(data)} min={prem}")
@@ -289,7 +306,7 @@ def precio(grupo, fecha):
         px.index = pd.to_datetime(px.index)
         px.index = px.index.tz_localize("America/New_York") if px.index.tz is None else px.index.tz_convert(TZ)
         px = px[(px.index >= a - pd.Timedelta(minutes=10)) & (px.index <= b)]
-        cols = [c for c in ("Open","High","Low","Close") if c in px.columns]
+        cols = [c for c in ("Open", "High", "Low", "Close") if c in px.columns]
         if cols:
             frames.append(px[cols].copy())
     if not frames:
@@ -413,10 +430,8 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     hi_s = float(px["High"].max()) if "High" in px.columns else float(px["Close"].max())
     umbral = UMBRAL_BURBUJA if UMBRAL_BURBUJA > 0 else MIN_BURBUJA.get(grupo, 1_200_000)
     nota = lectura(df, px, niv, last, fecha)
-
     fig = plt.figure(figsize=(FIG_ANCHO, FIG_ALTO), facecolor=bg)
-    gs = fig.add_gridspec(4, 1, hspace=0.06,
-                          height_ratios=[PRECIO_ALTO, FRANJA_ALTO, QD_ALTO, TOTAL_ALTO])
+    gs = fig.add_gridspec(4, 1, hspace=0.06, height_ratios=[PRECIO_ALTO, FRANJA_ALTO, QD_ALTO, TOTAL_ALTO])
     ax1 = fig.add_subplot(gs[0])
     axA = fig.add_subplot(gs[1], sharex=ax1)
     axQ = fig.add_subplot(gs[2], sharex=ax1)
@@ -432,13 +447,11 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     plt.setp(ax1.get_xticklabels(), visible=False)
     plt.setp(axA.get_xticklabels(), visible=False)
     plt.setp(axQ.get_xticklabels(), visible=False)
-
     ax1.plot(px.index, px["Close"], color="#6ea8ff", lw=1.55)
     ax1.fill_between(px.index, px["Close"], lo_s, color="#6ea8ff", alpha=0.06)
     ax1.axhline(open_px, color="#8b9bb0", lw=0.7, ls=":", alpha=0.65)
     pad = (hi_s - lo_s) * 0.10 or last * 0.002
     ax1.set_ylim(lo_s - pad, hi_s + pad)
-
     neto = 0.0
     if df is not None and not df.empty:
         grandes = df[df["premium"] >= umbral]
@@ -461,9 +474,8 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
             if any(abs((r["hora"] - t).total_seconds()) < 180 for t in usados):
                 continue
             usados.append(r["hora"])
-            ax1.annotate(etiqueta_print(r, fecha), (r["hora"], y),
-                         textcoords="offset points", xytext=(6, 8),
-                         color=gold, fontsize=7.4, fontweight="bold")
+            ax1.annotate(etiqueta_print(r, fecha), (r["hora"], y), textcoords="offset points",
+                         xytext=(6, 8), color=gold, fontsize=7.4, fontweight="bold")
         neto = float(df["qdelta"].sum())
         vis = df.copy()
         cap = vis["premium"].quantile(0.92) if len(vis) > 6 else vis["premium"].max()
@@ -475,23 +487,20 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         qd = df.set_index("hora")["qdelta"].resample("5min").sum().fillna(0)
         axQ.bar(qd.index, qd.values / 1e6, width=0.0028,
                 color=["#2ecc71" if v >= 0 else "#e74c3c" for v in qd.values])
-
     for k, col in (("PW", "#e74c3c"), ("QF", "#1aa3a3"), ("CW", "#2ecc71")):
         v = niv.get(k)
         if v is None:
             continue
         if lo_s - pad <= v <= hi_s + pad:
             ax1.axhline(v, color=col, ls="--", lw=1.15)
-            ax1.text(a0, v, f" {k} {v:.2f} ", color="white", fontsize=8,
-                     fontweight="bold", va="bottom", bbox=dict(fc=col, ec="none", pad=0.2))
-    ax1.text(1.0, last, f" {last:,.2f} ", transform=ax1.get_yaxis_transform(),
-             color="white", fontsize=8, va="center", ha="left",
-             bbox=dict(fc="#3d5afe", ec="none", pad=0.22))
+            ax1.text(a0, v, f" {k} {v:.2f} ", color="white", fontsize=8, fontweight="bold",
+                     va="bottom", bbox=dict(fc=col, ec="none", pad=0.2))
+    ax1.text(1.0, last, f" {last:,.2f} ", transform=ax1.get_yaxis_transform(), color="white",
+             fontsize=8, va="center", ha="left", bbox=dict(fc="#3d5afe", ec="none", pad=0.22))
     ax1.text(0.01, 0.02, nota, transform=ax1.transAxes, color="#d7e3f4", fontsize=7.0,
              va="bottom", ha="left", family="DejaVu Sans",
              bbox=dict(fc="#121b2c", ec="#2a3b55", pad=4, alpha=0.92))
     ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
-
     serie = net.get("serie", pd.Series(dtype=float))
     axA.set_ylim(0, 1)
     axA.set_yticks([])
@@ -504,13 +513,11 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
             n = max(min(v / mx, 1), -1)
             c = "#d4af37" if n >= 0.22 else "#5ec8c6" if n >= 0 else "#8b6cc9" if n <= -0.22 else "#6f8fb3"
             axA.axvspan(ts, ts + paso, ymin=0.12, ymax=0.88, color=c, lw=0, alpha=0.86)
-
     axQ.axhline(0, color=fg, lw=0.5)
     axQ.set_ylabel("QD NOTIONAL $M", color=fg, fontsize=7)
     axT.set_ylabel("TOTAL $M", color=fg, fontsize=7)
     axT.xaxis.set_major_locator(mdates.HourLocator(interval=1, tz=TZ))
     axT.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=TZ))
-
     ratio = float(net.get("flow_ratio", 1) or 1)
     sem = extra.get("sem", {"texto": "-", "color": "Y", "p1": 0, "p2": 0, "p3": 0})
     qd30 = extra.get("qd30", 0)
