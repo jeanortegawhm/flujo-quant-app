@@ -89,7 +89,7 @@ st.markdown("""
 <div class="q-hero">
   <div class="q-kicker">QUANT FLOW</div>
   <div class="q-title"><span>Flujo</span> Quant</div>
-  <div class="q-sub">Tape · GEX · OI · Dark pool — el print no es la dirección del ETF</div>
+  <div class="q-sub">QQQ/NDX · SPY/SPX · DIA/DJX · GLD — el print no es la dirección del ETF</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -106,10 +106,9 @@ t1, t2, t3, t4, t5 = st.tabs(["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "
 with t1:
     st.markdown("""
     <div class="q-box">
-    <b>Qué ves.</b> Precio + anillos de prima + agresor + QD + TOTAL.<br>
+    <b>Qué ves.</b> Tape de QQQ, SPY, SPX+SPXW, DIA y GLD.<br>
     <b>Cómo leer.</b> <i>C+/P+</i> verde = call compra o put venta.
-    <i>C-/P-</i> rojo = call venta o put compra.
-    QD suma no es un print. Niveles lejos del rango del día no se pintan.
+    <i>C-/P-</i> rojo = call venta o put compra. Suma QD no es un print.
     </div>
     """, unsafe_allow_html=True)
     f1, f2, f3, f4b = st.columns(4)
@@ -139,7 +138,7 @@ with t1:
 with t2:
     st.markdown("""
     <div class="q-box">
-    <b>Qué ves.</b> Sesgo de varios días. Un print 0DTE no abre swing.
+    <b>Qué ves.</b> Swing de los mismos 5 libros. Un print 0DTE no abre swing.
     </div>
     """, unsafe_allow_html=True)
     if st.button("Generar Swing", width="stretch"):
@@ -180,8 +179,8 @@ with t3:
 with t4:
     st.markdown("""
     <div class="q-box">
-    <b>Qué ves.</b> Dos libros (QQQ/NDX, SPY/SPX, IWM/RUT). Zoom = spot real.
-    Si RUT no responde, se intenta IWM y se etiqueta.
+    <b>Qué ves.</b> Libros Hunab / Gregory: QQQ vs NDX, SPY vs SPX, DIA vs DJX.
+    GLD no tiene par de índice limpio. Zoom = spot real.
     </div>
     """, unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
@@ -196,17 +195,21 @@ with t4:
                     spot = last_price(tk)
                     df = gex_strikes(tk, hoy, spot)
                     st.pyplot(fig_gex(tk, df, niv, spot), width="stretch")
+        st.subheader("GLD")
+        niv = gex_niveles("GLD", hoy)
+        spot = last_price("GLD")
+        st.pyplot(fig_gex("GLD", gex_strikes("GLD", hoy, spot), niv, spot), width="stretch")
     except Exception as e:
         st.error(e)
 
 with t5:
     st.markdown("""
     <div class="q-box">
-    <b>Qué ves.</b> GEX por strike, OI y dark pool reciente. No es el tape del día.
+    <b>Qué ves.</b> GEX, OI y dark pool reciente. No es el tape del día.
     </div>
     """, unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
-    tk = st.selectbox("Ticker", ["QQQ","NDX","SPY","SPX","IWM","RUT","IBIT","GLD"])
+    tk = st.selectbox("Ticker", ["QQQ", "NDX", "SPY", "SPX", "DIA", "DJX", "GLD"])
     try:
         from paneles import gex_niveles, gex_strikes, oi_vol, darkpool, fig_gex, fig_oi, fig_dp, last_price
         hoy = datetime.now(ZoneInfo("America/New_York")).date()
