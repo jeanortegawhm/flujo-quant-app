@@ -26,7 +26,6 @@ QD_ALTO = float(os.getenv("QD_ALTO", "1.12"))
 TOTAL_ALTO = float(os.getenv("TOTAL_ALTO", "1.08"))
 DPI = int(os.getenv("DPI_FIG", "118"))
 MAX_DTE = int(os.getenv("MAX_DTE", "5"))
-
 LIMIT, MAX_ETIQUETAS = 200, 5
 TZ, TZ_COL = ZoneInfo("America/New_York"), ZoneInfo("America/Bogota")
 CARPETA = os.getenv("FLUJOS_DIR", os.path.join(os.path.expanduser("~"), "flujos"))
@@ -36,14 +35,12 @@ BLOQUES = [(9,30,10,15),(10,15,11,15),(11,15,12,30),(12,30,14,0),(14,0,15,15),(1
 
 def ayer():
     d = datetime.now(TZ).date() - timedelta(days=1)
-    while d.weekday() >= 5:
-        d -= timedelta(days=1)
+    while d.weekday() >= 5: d -= timedelta(days=1)
     return d
 
 def sesion(fecha):
-    a = datetime(fecha.year, fecha.month, fecha.day, 9, 30, tzinfo=TZ)
-    b = datetime(fecha.year, fecha.month, fecha.day, 16, 0, tzinfo=TZ)
-    return a, b
+    return (datetime(fecha.year, fecha.month, fecha.day, 9, 30, tzinfo=TZ),
+            datetime(fecha.year, fecha.month, fecha.day, 16, 0, tzinfo=TZ))
 
 def fmt_usd(x):
     x = float(x or 0); s = "-" if x < 0 else ""; x = abs(x)
@@ -53,20 +50,15 @@ def fmt_usd(x):
     return f"{s}${x:,.0f}"
 
 def num(x):
-    try:
-        return None if x in (None, "") else float(x)
-    except Exception:
-        return None
+    try: return None if x in (None, "") else float(x)
+    except Exception: return None
 
 def get_json(url, params=None):
     try:
         r = requests.get(url, headers=headers, params=params or {}, timeout=25)
-        if r.status_code != 200 or not r.text:
-            print("  API", r.status_code, url.split("/")[-1]); return None
-        p = r.json()
-        return p.get("data") if isinstance(p, dict) else p
-    except Exception as e:
-        print("  api", e); return None
+        if r.status_code != 200 or not r.text: return None
+        p = r.json(); return p.get("data") if isinstance(p, dict) else p
+    except Exception: return None
 
 def telegram(msg):
     tok, chat = os.getenv("TELEGRAM_BOT_TOKEN",""), os.getenv("TELEGRAM_CHAT_ID","")
@@ -74,19 +66,15 @@ def telegram(msg):
     try:
         requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
                       json={"chat_id": chat, "text": msg}, timeout=12)
-    except Exception:
-        pass
+    except Exception: pass
 
 def dte_de(row, fecha):
     exp = row.get("expiry")
-    if exp is None or (isinstance(exp, float) and np.isnan(exp)):
-        return ""
+    if exp is None or (isinstance(exp, float) and np.isnan(exp)): return ""
     try:
-        if hasattr(exp, "date"):
-            exp = exp.date()
+        if hasattr(exp, "date"): exp = exp.date()
         return f"{max((exp - fecha).days, 0)}d"
-    except Exception:
-        return ""
+    except Exception: return ""
 
 def estilo(row):
     tags = str(row.get("tags", "") or "").lower()
@@ -99,12 +87,10 @@ def niveles(tk, fecha, spot=None):
     for src in ("oi", "vol"):
         d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
                      {"date": str(fecha), "source": src})
-        if not isinstance(d, dict):
-            continue
+        if not isinstance(d, dict): continue
         for k, c in (("CW","call_wall"),("PW","put_wall"),("QF","gamma_flip"),("MAGNET","gamma_magnet")):
             v = num(d.get(c))
-            if v is not None:
-                raw[f"{k}_{src.upper()}"] = v
+            if v is not None: raw[f"{k}_{src.upper()}"] = v
     return {k: raw.get(f"{k}_OI") or raw.get(f"{k}_VOL") for k in ("CW","PW","QF","MAGNET")}
 
 def vol_extra(tk, fecha):
@@ -113,33 +99,27 @@ def vol_extra(tk, fecha):
     if isinstance(rows, list) and rows:
         d1 = next((r for r in rows if num(r.get("days")) == 1), None)
         d30 = next((r for r in rows if num(r.get("days")) == 30), rows[-1])
-        if d1:
-            out["imp_move_pct"] = num(d1.get("implied_move_perc"))
+        if d1: out["imp_move_pct"] = num(d1.get("implied_move_perc"))
         if d30:
-            out["iv"] = num(d30.get("volatility"))
-            out["ivp"] = num(d30.get("percentile"))
-    if out["iv"] and out["iv"] < 3:
-        out["iv"] *= 100
+            out["iv"] = num(d30.get("volatility")); out["ivp"] = num(d30.get("percentile"))
+    if out["iv"] and out["iv"] < 3: out["iv"] *= 100
     return out
 
 def net_prem(tk, fecha):
     vac = {"net_call": 0, "net_put": 0, "flow_ratio": 1.0, "serie": pd.Series(dtype=float)}
     rows = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/net-prem-ticks", {"date": str(fecha)})
-    if not isinstance(rows, list) or not rows:
-        return vac
+    if not isinstance(rows, list) or not rows: return vac
     df = pd.DataFrame(rows)
     df["hora"] = pd.to_datetime(df.get("tape_time"), utc=True, errors="coerce").dt.tz_convert(TZ)
     df["net_call"] = pd.to_numeric(df.get("net_call_premium", 0), errors="coerce").fillna(0)
     df["net_put"] = pd.to_numeric(df.get("net_put_premium", 0), errors="coerce").fillna(0)
     df["agres"] = df["net_call"] - df["net_put"]
     tc, tp = float(df["net_call"].sum()), float(df["net_put"].sum())
-    bull = max(tc, 0) + max(-tp, 0)
-    bear = max(-tc, 0) + max(tp, 0)
+    bull = max(tc, 0) + max(-tp, 0); bear = max(-tc, 0) + max(tp, 0)
     ratio = bull / bear if bear else (2 if bull else 1)
     mins = max(int(FRANJA_MIN), 5)
     a, b = sesion(fecha)
-    serie = (df.dropna(subset=["hora"]).set_index("hora")["agres"]
-             .resample(f"{mins}min").sum().fillna(0))
+    serie = (df.dropna(subset=["hora"]).set_index("hora")["agres"].resample(f"{mins}min").sum().fillna(0))
     return {"net_call": tc, "net_put": tp, "flow_ratio": ratio,
             "serie": serie[(serie.index >= a) & (serie.index <= b)]}
 
@@ -243,19 +223,17 @@ def semaforo(last, niv, ratio, qd30, vol, hi, lo, open_px):
     qf, pw, cw = niv.get("QF"), niv.get("PW"), niv.get("CW")
     p1 = 0
     if qf: p1 = 1 if last >= qf else -1
-    if pw and last < pw: p1 = -1
-    if cw and last > cw: p1 = 1
-    # si recuperó el QF al cierre, P1 no se queda pegado a la apertura
+    if last >= (open_px or last) and last > lo * 1.004 and p1 < 0:
+        p1 = 0
     if qf and last >= qf: p1 = 1
+    if cw and last > cw: p1 = 1
     p2 = 1 if qd30 > 250_000 else -1 if qd30 < -250_000 else 0
     if ratio >= 1.25 and p2 >= 0: p2 = 1
     if ratio <= 0.8 and p2 <= 0: p2 = -1
     imp = vol.get("imp_move_pct") or 0
     ivp = vol.get("ivp") or 50
     rng = (hi - lo) / max(abs(last), 1)
-    p3 = 0
-    if imp and rng < imp * 0.75:
-        p3 = p2 if p2 != 0 else p1
+    p3 = p2 if imp and rng < imp * 0.75 and p2 != 0 else 0
     if ivp and ivp >= 85: p3 = 0
     up = sum(v > 0 for v in (p1, p2, p3))
     dn = sum(v < 0 for v in (p1, p2, p3))
@@ -271,15 +249,20 @@ def top_txt(part, fecha):
     return f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, fecha)}"
 
 def lectura(df, px, niv, last, fecha):
-    if px is None or px.empty:
-        return "Sin precio."
+    if px is None or px.empty: return "Sin precio."
     open_px = float(px["Open"].iloc[0]) if "Open" in px.columns else float(px["Close"].iloc[0])
     lo = float(px["Low"].min()) if "Low" in px.columns else float(px["Close"].min())
+    hi = float(px["High"].max()) if "High" in px.columns else float(px["Close"].max())
     t_low = px["Low"].idxmin() if "Low" in px.columns else px["Close"].idxmin()
     drop = (open_px - lo) / max(abs(open_px), 1)
     qf = niv.get("QF")
-    gex = "bajo QF (dealer amplifica)" if qf and last < qf else (
-          "sobre QF (dealer frena)" if qf else "sin QF")
+    if qf:
+        if last >= qf: gex = f"Cierre sobre QF {qf:.2f} (dealer frena)"
+        else: gex = f"Cierre bajo QF {qf:.2f} (dealer amplifica)"
+        if qf > hi * 1.003: gex += " | QF arriba, fuera de escala"
+        if qf < lo * 0.997: gex += " | QF abajo, fuera de escala"
+    else:
+        gex = "Sin QF"
     n_c = n_r = 0.0
     caida = rebote = pd.DataFrame()
     if df is not None and not df.empty:
@@ -287,23 +270,23 @@ def lectura(df, px, niv, last, fecha):
         n_c = float(caida["qdelta"].sum()) if not caida.empty else 0
         n_r = float(rebote["qdelta"].sum()) if not rebote.empty else 0
     lineas = [gex]
-    if drop < 0.0015 or last >= open_px and drop < 0.004:
-        lineas.append("No hubo caida intradía clara (hueco o deriva).")
+    if drop < 0.0015:
+        lineas.append("No hubo caida intradía clara.")
     elif abs(n_c) < 400_000:
         lineas.append("Bajada SIN tape grande. Futuros / cash / GEX.")
     elif n_c < 0:
-        lineas.append(f"Bajada con tape put/venta {fmt_usd(n_c)}. Top {top_txt(caida, fecha)}.")
+        lineas.append(f"Bajada. Suma QD {fmt_usd(n_c)}. Top print {top_txt(caida, fecha)}.")
     else:
-        lineas.append(f"Bajada CON tape mixto {fmt_usd(n_c)}. No culpes al print.")
+        lineas.append(f"Bajada. Suma QD mixto {fmt_usd(n_c)}. No culpes al print.")
     if last <= lo * 1.001:
         lineas.append("Aun no hay rebote.")
     elif abs(n_r) < 400_000:
-        lineas.append("Subida SIN tape grande. Cobertura MM / mean reversion.")
+        lineas.append("Subida SIN tape grande. Cobertura MM.")
     elif n_r > 0:
-        lineas.append(f"Subida con tape call/compra {fmt_usd(n_r)}. Top {top_txt(rebote, fecha)}.")
+        lineas.append(f"Subida. Suma QD {fmt_usd(n_r)}. Top print {top_txt(rebote, fecha)}.")
     else:
-        lineas.append(f"Subida CON tape mixto {fmt_usd(n_r)}. Print no es la direccion.")
-    return "\n".join(textwrap.fill(x, 46) for x in lineas)
+        lineas.append(f"Subida. Suma QD mixto {fmt_usd(n_r)}. Print no es direccion.")
+    return "\n".join(textwrap.fill(x, 52) for x in lineas)
 
 def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     px = precio(grupo, fecha)
@@ -329,8 +312,7 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelsize=8)
         ax.grid(True, color=grid, alpha=0.28)
-        for s in ax.spines.values():
-            s.set_color(grid)
+        for s in ax.spines.values(): s.set_color(grid)
         ax.set_xlim(a0, b0)
     axA.grid(False)
     plt.setp(ax1.get_xticklabels(), visible=False)
@@ -359,8 +341,7 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         for _, r in top.iterrows():
             y = r["spot"] if r["spot"] else last
             if not (lo_s - pad <= y <= hi_s + pad): y = last
-            if any(abs((r["hora"] - t).total_seconds()) < 180 for t in usados):
-                continue
+            if any(abs((r["hora"] - t).total_seconds()) < 180 for t in usados): continue
             usados.append(r["hora"])
             txt = f"{fmt_usd(r['premium'])} {r['contrato']}{dte_de(r, fecha)}"
             if r["estilo"] != "PRT": txt += f" {r['estilo']}"
@@ -381,14 +362,18 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     for k, col in (("PW", "#e74c3c"), ("QF", "#1aa3a3"), ("CW", "#2ecc71")):
         v = niv.get(k)
         if v is None: continue
-        if v < lo_s - pad * 3 or v > hi_s + pad * 3: continue
-        ax1.axhline(v, color=col, ls="--", lw=1.15)
-        ax1.text(a0, v, f" {k} {v:.2f} ", color="white", fontsize=8,
-                 fontweight="bold", va="bottom", bbox=dict(fc=col, ec="none", pad=0.2))
+        if lo_s - pad <= v <= hi_s + pad:
+            ax1.axhline(v, color=col, ls="--", lw=1.15)
+            ax1.text(a0, v, f" {k} {v:.2f} ", color="white", fontsize=8,
+                     fontweight="bold", va="bottom", bbox=dict(fc=col, ec="none", pad=0.2))
+        else:
+            lado_txt = "arriba" if v > hi_s else "abajo"
+            ax1.text(0.99, 0.97 if v > hi_s else 0.12, f"{k} {v:.2f} ({lado_txt})",
+                     transform=ax1.transAxes, color=col, fontsize=7.5, ha="right", va="top")
     ax1.text(1.0, last, f" {last:,.2f} ", transform=ax1.get_yaxis_transform(),
              color="white", fontsize=8, va="center", ha="left",
              bbox=dict(fc="#3d5afe", ec="none", pad=0.22))
-    ax1.text(0.01, 0.02, nota, transform=ax1.transAxes, color="#d7e3f4", fontsize=7.1,
+    ax1.text(0.01, 0.02, nota, transform=ax1.transAxes, color="#d7e3f4", fontsize=7.0,
              va="bottom", ha="left", family="DejaVu Sans",
              bbox=dict(fc="#121b2c", ec="#2a3b55", pad=4, alpha=0.92))
     ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
@@ -413,15 +398,15 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
     ratio = float(net.get("flow_ratio", 1) or 1)
     sem = extra.get("sem", {"texto": "-", "color": "Y"})
     qd30 = extra.get("qd30", 0)
-    iv = f"  IV {vol['iv']:.1f}%" if vol.get("iv") else ""
+    iv = f"  |  IV {vol['iv']:.1f}%" if vol.get("iv") else ""
     ax1.set_title(
-        f"{grupo} {etiqueta} {fecha}   |   {sem['color']} {sem['texto']}   |   "
-        f"net {fmt_usd(neto)}   30m {fmt_usd(qd30)}   flow {ratio:.2f}{iv}",
+        f"{grupo} {etiqueta} {fecha}  |  {sem['color']} {sem['texto']}  |  "
+        f"net {fmt_usd(neto)}  |  30m {fmt_usd(qd30)}  |  flow {ratio:.2f}{iv}",
         color=fg, loc="left", fontsize=10, pad=6,
     )
     fig.text(0.01, 0.008,
-             f"NY {datetime.now(TZ):%H:%M}   COL {datetime.now(TZ_COL):%H:%M}   "
-             f"anillo = prima   |   print no es direccion del ETF   |   SPX incluye SPXW",
+             f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
+             f"verde = call compra / put venta   rojo = put compra / call venta  |  suma QD != print",
              color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.025, 1, 1])
     ruta = os.path.join(CARPETA, f"{grupo}_{etiqueta}_{fecha}_{datetime.now(TZ):%H%M%S}.png")
@@ -434,8 +419,7 @@ def grafico(grupo, df, etiqueta, fecha, niv, vol, net, extra):
         "p1": sem["p1"], "p2": sem["p2"], "p3": sem["p3"],
         "qdelta": neto, "qd30": qd30, "flow_ratio": ratio,
         "iv": vol.get("iv"), "ivp": vol.get("ivp"), "imp_move_pct": vol.get("imp_move_pct"),
-        "cw": niv.get("CW"), "pw": niv.get("PW"), "qf": niv.get("QF"),
-        "nota": nota,
+        "cw": niv.get("CW"), "pw": niv.get("PW"), "qf": niv.get("QF"), "nota": nota,
     }
 
 def procesar(fecha, etiqueta, resumen):
