@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-API = "2e4e4ad4-3b8c-4dda-b65d-054dc77c497e"
+API = "5c48e1bf-ed44-4fc7-a398-52ffc7f3311c"
 TZ = ZoneInfo("America/New_York")
 PARES = [("QQQ", "NDX"), ("SPY", "SPX"), ("DIA", "DJX")]
 UW_ALIAS = {"NDX": ["NDX", "QQQ"], "SPX": ["SPX", "SPXW"], "DJX": ["DJX", "DIA"]}
