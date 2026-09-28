@@ -90,23 +90,22 @@ def ohlc_rango(tk, fechas):
             low=("low", "min"), close=("close", "last"),
         )
         for _, r in df.iterrows():
-            out[r["d"]] = {
-                "open": float(r["open"]),
-                "high": float(r["high"]),
-                "low": float(r["low"]),
-                "close": float(r["close"]),
-            }
+            out[r["d"]] = {"open": float(r["open"]), "high": float(r["high"]),
+                           "low": float(r["low"]), "close": float(r["close"])}
     if fechas[-1] not in out:
-        d = get(f"https://api.unusualwhales.com/api/stock/{tk}/quote") or {}
+        d = get(f"https://api.unusualwhales.com/api/stock/{tk}/stock-state") or {}
+        if not isinstance(d, dict) or not d:
+            d = get(f"https://api.unusualwhales.com/api/stock/{tk}/quote") or {}
+        v = None
         if isinstance(d, dict):
-            v = None
-            for k in ("close", "last", "last_price", "price"):
-                v = num(d.get(k))
+            lt = d.get("last_trade") if isinstance(d.get("last_trade"), dict) else {}
+            for x in (d.get("close"), d.get("last"), d.get("last_price"), d.get("price"), lt.get("price")):
+                v = num(x)
                 if v:
                     break
-            if v:
-                out[fechas[-1]] = {"open": v, "high": v, "low": v, "close": v}
-                print("  quote fallback", tk, v)
+        if v:
+            out[fechas[-1]] = {"open": v, "high": v, "low": v, "close": v}
+            print("  quote fallback", tk, v)
     print("  velas", tk, len(out), "días")
     return out
 
@@ -221,10 +220,8 @@ def veredicto(df):
 
 def grafico(grupo, df):
     bg, fg, grid = "#0b1220", "#e8eef7", "#1d2a3d"
-    fig, (ax1, ax2) = plt.subplots(
-        2, 1, figsize=(12.2, 8.2), facecolor=bg,
-        gridspec_kw={"height_ratios": [2.2, 1.1], "hspace": 0.12},
-    )
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12.2, 8.2), facecolor=bg,
+                                   gridspec_kw={"height_ratios": [2.2, 1.1], "hspace": 0.12})
     for ax in (ax1, ax2):
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelsize=8)
@@ -242,19 +239,15 @@ def grafico(grupo, df):
     else:
         ax1.plot(x, df["close"], color="#6ea8ff", lw=1.8)
         if df["low"].notna().any() and df["high"].notna().any():
-            ax1.fill_between(
-                x, df["low"].fillna(df["close"]), df["high"].fillna(df["close"]),
-                color="#6ea8ff", alpha=0.08,
-            )
+            ax1.fill_between(x, df["low"].fillna(df["close"]), df["high"].fillna(df["close"]),
+                             color="#6ea8ff", alpha=0.08)
         qf = df["qf"].dropna().iloc[-1] if df["qf"].notna().any() else None
         if qf:
             ax1.axhline(qf, color="#1aa3a3", ls="--", lw=1.1)
             ax1.text(0, qf, f" QF {qf:.2f} ", color="white", fontsize=8, va="bottom",
                      bbox=dict(fc="#1aa3a3", ec="none", pad=0.2))
-        ax1.set_title(
-            f"{grupo} SWING {df['fecha'].iloc[0]} → {df['fecha'].iloc[-1]}   |   {col} {tit}",
-            color=fg, loc="left", fontsize=11, pad=6,
-        )
+        ax1.set_title(f"{grupo} SWING {df['fecha'].iloc[0]} → {df['fecha'].iloc[-1]}   |   {col} {tit}",
+                      color=fg, loc="left", fontsize=11, pad=6)
     if len(x):
         ax1.set_xticks(x)
         ax1.set_xticklabels([pd.Timestamp(d).strftime("%m-%d") for d in df["fecha"]])
@@ -267,12 +260,10 @@ def grafico(grupo, df):
         ax2.set_xticklabels([pd.Timestamp(d).strftime("%m-%d") for d in df["fecha"]])
     ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
     ax2.set_ylabel("NET PREM $M", color=fg, fontsize=8)
-    fig.text(
-        0.01, 0.01,
-        f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
-        f"swing = varios días  |  un C+0d no abre swing",
-        color="#8b9bb0", fontsize=8,
-    )
+    fig.text(0.01, 0.01,
+             f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
+             f"swing = varios días  |  un C+0d no abre swing",
+             color="#8b9bb0", fontsize=8)
     fig.tight_layout(rect=[0, 0.03, 1, 1])
     fig.savefig(ruta, dpi=118, bbox_inches="tight", facecolor=bg)
     plt.close(fig)

@@ -27,24 +27,32 @@ def fnum(x):
         return None
 
 def flow_strike(tk, fecha, spot=None):
-    raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/flow-per-strike", {"date": str(fecha)})
-    if not isinstance(raw, list) or not raw:
-        raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/flow-per-strike-intraday", {"date": str(fecha)})
+    raw = None
+    for path in (
+        f"https://api.unusualwhales.com/api/stock/{tk}/flow-per-strike",
+        f"https://api.unusualwhales.com/api/stock/{tk}/flow-per-strike-intraday",
+        f"https://api.unusualwhales.com/api/stock/{tk}/flow-per-expiry",
+    ):
+        raw = get(path, {"date": str(fecha)})
+        if isinstance(raw, list) and raw:
+            break
     df = pd.DataFrame(raw if isinstance(raw, list) else [])
     if df.empty:
         return df
     if "strike" in df.columns:
         df["strike"] = pd.to_numeric(df["strike"], errors="coerce")
-    for c in ("call_premium", "put_premium"):
+    for c in ("call_premium", "put_premium", "net_call_premium", "net_put_premium"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     if "call_premium" not in df.columns:
-        df["call_premium"] = 0.0
+        df["call_premium"] = df.get("net_call_premium", 0)
     if "put_premium" not in df.columns:
-        df["put_premium"] = 0.0
+        df["put_premium"] = df.get("net_put_premium", 0)
+    df["call_premium"] = pd.to_numeric(df["call_premium"], errors="coerce").fillna(0)
+    df["put_premium"] = pd.to_numeric(df["put_premium"], errors="coerce").fillna(0)
     df["net"] = df["call_premium"] - df["put_premium"]
     if spot and "strike" in df.columns:
-        df = df[(df["strike"] >= spot * 0.96) & (df["strike"] <= spot * 1.04)]
+        df = df[(df["strike"] >= spot * 0.94) & (df["strike"] <= spot * 1.06)]
     if "strike" in df.columns:
         df = df.dropna(subset=["strike"]).groupby("strike", as_index=False)[["call_premium", "put_premium", "net"]].sum()
         return df.sort_values("strike")
@@ -52,15 +60,18 @@ def flow_strike(tk, fecha, spot=None):
 
 def greeks_net(tk, fecha):
     raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure", {"date": str(fecha)})
+    if not raw:
+        raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures", {"date": str(fecha)})
     row = {}
     if isinstance(raw, list) and raw:
         row = raw[0] if isinstance(raw[0], dict) else {}
     elif isinstance(raw, dict):
         row = raw
     out = {}
-    for k in ("call_gamma", "put_gamma", "call_vanna", "put_vanna", "call_charm", "put_charm"):
+    for k in ("call_gamma", "put_gamma", "call_vanna", "put_vanna", "call_charm", "put_charm",
+              "call_gamma_oi", "put_gamma_oi"):
         out[k] = fnum(row.get(k)) or 0.0
-    out["net_gamma"] = out["call_gamma"] + out["put_gamma"]
+    out["net_gamma"] = out["call_gamma"] + out["put_gamma"] + out["call_gamma_oi"] + out["put_gamma_oi"]
     out["net_vanna"] = out["call_vanna"] + out["put_vanna"]
     out["net_charm"] = out["call_charm"] + out["put_charm"]
     return out
@@ -108,7 +119,10 @@ def fig_flow_strike(tk, df, spot):
     ax.tick_params(colors="#e8eef7", labelsize=8)
     ax.grid(True, color="#1d2a3d", alpha=0.35)
     if df is None or df.empty or "strike" not in df.columns:
-        ax.set_title(f"{tk}  flow por strike vacío", color="#e8eef7", loc="left")
+        ax.set_title(f"{tk}  flow por strike vacío (plan UW o fecha)", color="#e8eef7", loc="left")
+        if spot:
+            ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0)
+            ax.set_ylim(spot * 0.96, spot * 1.04)
         return fig
     y = df["strike"].values
     call = df["call_premium"].fillna(0).values / 1e6
@@ -118,7 +132,7 @@ def fig_flow_strike(tk, df, spot):
     ax.barh(y, put, height=h, color="#9b59b6", label="Put $M")
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0)
-        ax.set_ylim(spot * 0.96, spot * 1.04)
+        ax.set_ylim(spot * 0.94, spot * 1.06)
     ax.set_title(f"{tk}  prima por strike", color="#e8eef7", loc="left", fontsize=10)
     ax.set_xlabel("$M", color="#8b9bb0")
     ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7)
