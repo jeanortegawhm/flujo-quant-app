@@ -6,11 +6,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-API = "5c48e1bf-ed44-4fc7-a398-52ffc7f3311c"
+API = os.getenv("UW_API_KEY", "")
 TZ = ZoneInfo("America/New_York")
 PARES = [("QQQ", "NDX"), ("SPY", "SPX"), ("DIA", "DJX")]
-UW_ALIAS = {"NDX": ["NDX", "QQQ"], "SPX": ["SPX", "SPXW"], "DJX": ["DJX", "DIA"]}
-PX_ALIAS = {"SPX": ["SPX", "SPXW"], "NDX": ["NDX", "QQQ"], "DJX": ["DJX", "DIA"]}
+UW_ALIAS = {"NDX": ["NDX"], "SPX": ["SPX", "SPXW"], "DJX": ["DJX", "DIA"]}
+PX_ALIAS = {"SPX": ["SPX", "SPXW"], "NDX": ["NDX"], "DJX": ["DJX"]}
 
 def get(url, params=None):
     try:
@@ -51,22 +51,49 @@ def _spot_de(raw, tk):
         v = v / 100.0
     return round(v, 2)
 
+def _quote(tk):
+    d = get(f"https://api.unusualwhales.com/api/stock/{tk}/quote") or {}
+    if not isinstance(d, dict):
+        return None
+    for k in ("close", "last", "last_price", "price", "mark"):
+        v = fnum(d.get(k))
+        if v:
+            if tk == "DJX" and v > 2000:
+                v = v / 100.0
+            return round(v, 2)
+    return None
+
 @lru_cache(maxsize=32)
 def last_price(tk):
     for uw in PX_ALIAS.get(tk, [tk]):
-        for size in ("1m", "5m"):
+        for size in ("1d", "5m", "1m"):
             v = _spot_de(get(f"https://api.unusualwhales.com/api/stock/{uw}/ohlc/{size}",
                              {"timeframe": "1D", "limit": 5}), tk)
             if v:
+                if tk == "NDX" and v < 2000:
+                    continue
+                if tk == "SPX" and v < 1000:
+                    continue
                 return v
-        d = get(f"https://api.unusualwhales.com/api/stock/{uw}/quote") or {}
-        if isinstance(d, dict):
-            for k in ("close", "last", "last_price", "price", "mark"):
-                v = fnum(d.get(k))
-                if v:
-                    if tk == "DJX" and v > 2000:
-                        v = v / 100.0
-                    return round(v, 2)
+        v = _quote(uw)
+        if v:
+            if tk == "NDX" and v < 2000:
+                continue
+            if tk == "SPX" and v < 1000:
+                continue
+            return v
+    if tk == "NDX":
+        q = last_price("QQQ")
+        if q:
+            return round(q * 40.0, 2)
+    if tk == "SPX":
+        s = last_price("SPY")
+        if s:
+            return round(s * 10.0, 2)
+    if tk == "DJX":
+        d = last_price("DIA")
+        if d:
+            return d
     return None
 
 def cerca(v, spot, pct=0.04):
@@ -92,7 +119,7 @@ def gex_niveles(tk, fecha, spot=None):
                 out[k] = v
     if spot:
         limpio = {}
-        for k, pct in (("gamma_flip", 0.02), ("call_wall", 0.04), ("put_wall", 0.04), ("gamma_magnet", 0.04)):
+        for k, pct in (("gamma_flip", 0.03), ("call_wall", 0.06), ("put_wall", 0.06), ("gamma_magnet", 0.06)):
             v = cerca(out.get(k), spot, pct)
             if v is not None:
                 limpio[k] = v
@@ -123,6 +150,9 @@ def gex_strikes(tk, fecha, spot=None):
         if not df.empty:
             used = cand
             break
+    if df.empty and tk == "NDX":
+        df = _fetch_strikes("QQQ", fecha)
+        used = "QQQ"
     if df.empty or "strike" not in df.columns:
         return pd.DataFrame()
     df.attrs["uw_ticker"] = used
@@ -131,7 +161,7 @@ def gex_strikes(tk, fecha, spot=None):
     df["call_gex"] = _pick(df, ("call_gamma_oi", "call_gex", "call_gamma", "gex_call", "call_gamma_vol", "gamma"))
     df["put_gex"] = _pick(df, ("put_gamma_oi", "put_gex", "put_gamma", "gex_put", "put_gamma_vol")).abs()
     if spot:
-        for lo, hi in ((0.985, 1.015), (0.97, 1.03), (0.96, 1.04)):
+        for lo, hi in ((0.985, 1.015), (0.97, 1.03), (0.94, 1.06)):
             near = df[(df["strike"] >= spot * lo) & (df["strike"] <= spot * hi)]
             if not near.empty and float((near["call_gex"] + near["put_gex"]).abs().sum()) != 0:
                 near.attrs["uw_ticker"] = used
@@ -180,24 +210,23 @@ def fig_gex(tk, df, niv, spot):
         s.set_color("#1d2a3d")
     tag = df.attrs.get("uw_ticker") if df is not None else None
     extra = f"  ({tag})" if tag and tag != tk else ""
-    if spot:
-        ax.set_ylim(spot * 0.96, spot * 1.04)
     vacio = df is None or df.empty or float((df.get("call_gex", pd.Series(dtype=float)).abs() + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0
     if vacio:
         ax.set_title(f"{tk}{extra}  sin GEX cerca del spot", color="#e8eef7", loc="left")
         if spot:
             ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0, label=f"Spot {spot:.2f}")
+            ax.set_ylim(spot * 0.96, spot * 1.04)
             ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7)
-        ax.text(0.03, 0.5, "UW sin gamma ±4% del spot.\nNo se pinta la cadena lejana.",
-                transform=ax.transAxes, color="#8b9bb0", fontsize=8)
+        ax.text(0.03, 0.5, "UW sin gamma cerca del spot.", transform=ax.transAxes, color="#8b9bb0", fontsize=8)
         return fig
     y = df["strike"].values
-    h = max((np.max(y) - np.min(y)) / max(len(y), 1) * 0.65, (spot or 100) * 0.0015)
+    h = max((np.max(y) - np.min(y)) / max(len(y), 1) * 0.65, (spot or float(np.median(y))) * 0.0015)
     ax.barh(y, df["call_gex"].fillna(0).values, color="#2ecc71", height=h, label="Call GEX")
     ax.barh(y, -df["put_gex"].fillna(0).abs().values, color="#9b59b6", height=h, label="Put GEX")
+    centro = spot if spot else float(np.median(y))
+    ax.set_ylim(centro * 0.96, centro * 1.04)
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.15, label=f"Spot {spot:.2f}")
-        ax.set_ylim(spot * 0.96, spot * 1.04)
     lo, hi = ax.get_ylim()
     def linea(v, c, n):
         if v is not None and lo <= v <= hi:
@@ -240,12 +269,12 @@ def fig_dp(tk, df, spot=None):
     if df.empty:
         ax.set_title(f"{tk}  dark pool vacío cerca del spot", color="#e8eef7", loc="left")
         return fig
-    df["n"] = df["n"].clip(upper=df["n"].quantile(0.92))
-    bins = pd.cut(df["price"], bins=min(16, max(6, df["price"].nunique())))
+    nbin = min(24, max(8, int(df["price"].nunique())))
+    bins = pd.cut(df["price"], bins=nbin)
     g = df.groupby(bins, observed=False)["n"].sum()
     mid = [i.mid for i in g.index]
-    ht = (mid[1] - mid[0]) * 0.7 if len(mid) > 1 else (spot or 1) * 0.002
-    ax.barh(mid, g.values, height=ht, color="#d4af37", alpha=0.85)
+    ht = (mid[1] - mid[0]) * 0.72 if len(mid) > 1 else (spot or 1) * 0.002
+    ax.barh(mid, g.values, height=ht, color="#d4af37", alpha=0.9)
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=0.9)
         ax.set_ylim(spot * 0.97, spot * 1.03)

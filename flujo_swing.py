@@ -25,7 +25,7 @@ def get(url, params=None):
     try:
         r = requests.get(url, headers=H, params=params or {}, timeout=25)
         if r.status_code != 200:
-            print("  HTTP", r.status_code, url.split("/api/")[-1])
+            print("  HTTP", r.status_code, url.split("/api/")[-1][:60])
             return None
         p = r.json()
         return p.get("data") if isinstance(p, dict) else p
@@ -57,35 +57,58 @@ def habiles(n):
         d -= timedelta(days=1)
     return list(reversed(out))
 
-def ohlc_dia(tk, fecha):
-    for size in ("5m", "1m"):
-        raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/ohlc/{size}", {
-            "date": str(fecha), "end_date": str(fecha), "timeframe": "1D", "limit": 800,
+def ohlc_rango(tk, fechas):
+    a, b = str(fechas[0]), str(fechas[-1])
+    out = {}
+    raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/ohlc/1d", {"date": a, "end_date": b, "limit": 40})
+    if not isinstance(raw, list) or not raw:
+        raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/ohlc/1h", {"date": a, "end_date": b, "limit": 400})
+    if not isinstance(raw, list) or not raw:
+        raw = get(f"https://api.unusualwhales.com/api/stock/{tk}/ohlc/5m", {"date": b, "end_date": b, "limit": 200})
+    rows = []
+    for r in raw or []:
+        tcol = r.get("start_time") or r.get("end_time") or r.get("date") or r.get("timestamp")
+        ts = pd.to_datetime(tcol, utc=True, errors="coerce")
+        if pd.isna(ts):
+            continue
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        ts = ts.tz_convert(TZ)
+        close = num(r.get("close"))
+        if not close:
+            continue
+        rows.append({
+            "d": ts.date(),
+            "open": num(r.get("open")) or close,
+            "high": num(r.get("high")) or close,
+            "low": num(r.get("low")) or close,
+            "close": close,
         })
-        if not isinstance(raw, list) or not raw:
-            continue
-        df = pd.DataFrame(raw)
-        for c in ("open", "high", "low", "close"):
-            if c in df.columns:
-                df[c] = pd.to_numeric(df[c], errors="coerce")
-        if "close" not in df.columns or not df["close"].notna().any():
-            continue
-        return {
-            "open": float(df["open"].dropna().iloc[0]) if "open" in df.columns and df["open"].notna().any() else float(df["close"].dropna().iloc[0]),
-            "high": float(df["high"].max()) if "high" in df.columns else float(df["close"].max()),
-            "low": float(df["low"].min()) if "low" in df.columns else float(df["close"].min()),
-            "close": float(df["close"].dropna().iloc[-1]),
-        }
-    d = get(f"https://api.unusualwhales.com/api/stock/{tk}/quote") or {}
-    if isinstance(d, dict):
-        v = None
-        for k in ("close", "last", "last_price", "price"):
-            v = num(d.get(k))
+    if rows:
+        df = pd.DataFrame(rows).groupby("d", as_index=False).agg(
+            open=("open", "first"), high=("high", "max"),
+            low=("low", "min"), close=("close", "last"),
+        )
+        for _, r in df.iterrows():
+            out[r["d"]] = {
+                "open": float(r["open"]),
+                "high": float(r["high"]),
+                "low": float(r["low"]),
+                "close": float(r["close"]),
+            }
+    if fechas[-1] not in out:
+        d = get(f"https://api.unusualwhales.com/api/stock/{tk}/quote") or {}
+        if isinstance(d, dict):
+            v = None
+            for k in ("close", "last", "last_price", "price"):
+                v = num(d.get(k))
+                if v:
+                    break
             if v:
-                break
-        if v:
-            return {"open": v, "high": v, "low": v, "close": v}
-    return None
+                out[fechas[-1]] = {"open": v, "high": v, "low": v, "close": v}
+                print("  quote fallback", tk, v)
+    print("  velas", tk, len(out), "días")
+    return out
 
 def net_dia(tk, fecha):
     rows = get(f"https://api.unusualwhales.com/api/stock/{tk}/net-prem-ticks", {"date": str(fecha)})
@@ -140,10 +163,15 @@ def sesgo_fila(close, qf, ratio, net, ivp):
     return p1, p2, p3, "NEU", f"{max(up, dn)}/3 NEUTRO"
 
 def serie_grupo(grupo, ticks, fechas):
+    cache = {}
+    for tk in ticks:
+        cache.update(ohlc_rango(tk, fechas))
+        if cache:
+            break
     rows = []
     for f in fechas:
         call = put = 0.0
-        niv, bar = {}, None
+        niv, bar = {}, cache.get(f)
         for tk in ticks:
             try:
                 n = net_dia(tk, f)
@@ -151,8 +179,6 @@ def serie_grupo(grupo, ticks, fechas):
                 put += n["put"]
                 if not niv:
                     niv = niveles(tk, f)
-                if bar is None:
-                    bar = ohlc_dia(tk, f)
             except Exception as e:
                 print("  skip", tk, f, e)
         net = call - put
@@ -162,7 +188,7 @@ def serie_grupo(grupo, ticks, fechas):
         close = bar["close"] if bar else None
         qf = niv.get("QF")
         if qf and bar:
-            if not (bar["low"] * 0.997 <= qf <= bar["high"] * 1.003):
+            if not (bar["low"] * 0.99 <= qf <= bar["high"] * 1.01):
                 qf = None
         iv, ivp = iv30(ticks[0], f)
         p1, p2, p3, col, txt = sesgo_fila(close, qf, ratio, net, ivp)
@@ -195,8 +221,10 @@ def veredicto(df):
 
 def grafico(grupo, df):
     bg, fg, grid = "#0b1220", "#e8eef7", "#1d2a3d"
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12.2, 8.2), facecolor=bg,
-                                   gridspec_kw={"height_ratios": [2.2, 1.1], "hspace": 0.12})
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(12.2, 8.2), facecolor=bg,
+        gridspec_kw={"height_ratios": [2.2, 1.1], "hspace": 0.12},
+    )
     for ax in (ax1, ax2):
         ax.set_facecolor(bg)
         ax.tick_params(colors=fg, labelsize=8)
@@ -204,43 +232,53 @@ def grafico(grupo, df):
         for s in ax.spines.values():
             s.set_color(grid)
     ruta = os.path.join(CARPETA, f"{grupo}_SWING_{datetime.now(TZ):%Y%m%d_%H%M%S}.png")
-    if df.empty or df["close"].isna().all():
-        ax1.set_title(f"{grupo} SWING  sin precio UW", color=fg, loc="left")
-        fig.savefig(ruta, dpi=118, bbox_inches="tight", facecolor=bg)
-        plt.close(fig)
-        return ruta, {}
-    x = np.arange(len(df))
-    ax1.plot(x, df["close"], color="#6ea8ff", lw=1.8)
-    if df["low"].notna().any() and df["high"].notna().any():
-        ax1.fill_between(x, df["low"].fillna(df["close"]), df["high"].fillna(df["close"]),
-                         color="#6ea8ff", alpha=0.08)
-    qf = df["qf"].dropna().iloc[-1] if df["qf"].notna().any() else None
-    if qf:
-        ax1.axhline(qf, color="#1aa3a3", ls="--", lw=1.1)
-        ax1.text(0, qf, f" QF {qf:.2f} ", color="white", fontsize=8, va="bottom",
-                 bbox=dict(fc="#1aa3a3", ec="none", pad=0.2))
-    ax1.set_xticks(x)
-    ax1.set_xticklabels([pd.Timestamp(d).strftime("%m-%d") for d in df["fecha"]])
-    ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
+    x = np.arange(len(df)) if not df.empty else np.array([])
+    sin_px = df.empty or df["close"].isna().all()
     col, tit, nota = veredicto(df)
-    ax1.set_title(f"{grupo} SWING {df['fecha'].iloc[0]} → {df['fecha'].iloc[-1]}   |   {col} {tit}",
-                  color=fg, loc="left", fontsize=11, pad=6)
-    ax1.text(0.01, 0.03, nota, transform=ax1.transAxes, color="#d7e3f4", fontsize=8,
-             va="bottom", bbox=dict(fc="#121b2c", ec="#2a3b55", pad=4, alpha=0.92))
-    nets = df["net"].fillna(0).values / 1e6
-    ax2.bar(x, nets, color=["#2ecc71" if v >= 0 else "#e74c3c" for v in nets], width=0.7)
-    ax2.axhline(0, color=fg, lw=0.5)
-    ax2.set_xticks(x)
-    ax2.set_xticklabels([pd.Timestamp(d).strftime("%m-%d") for d in df["fecha"]])
+    if sin_px:
+        ax1.set_title(f"{grupo} SWING   |   {col} {tit}   |   solo prima neta", color=fg, loc="left", fontsize=11)
+        ax1.text(0.01, 0.5, "UW no dio velas 1d. Abajo sí está el flujo.",
+                 transform=ax1.transAxes, color="#8b9bb0", fontsize=9)
+    else:
+        ax1.plot(x, df["close"], color="#6ea8ff", lw=1.8)
+        if df["low"].notna().any() and df["high"].notna().any():
+            ax1.fill_between(
+                x, df["low"].fillna(df["close"]), df["high"].fillna(df["close"]),
+                color="#6ea8ff", alpha=0.08,
+            )
+        qf = df["qf"].dropna().iloc[-1] if df["qf"].notna().any() else None
+        if qf:
+            ax1.axhline(qf, color="#1aa3a3", ls="--", lw=1.1)
+            ax1.text(0, qf, f" QF {qf:.2f} ", color="white", fontsize=8, va="bottom",
+                     bbox=dict(fc="#1aa3a3", ec="none", pad=0.2))
+        ax1.set_title(
+            f"{grupo} SWING {df['fecha'].iloc[0]} → {df['fecha'].iloc[-1]}   |   {col} {tit}",
+            color=fg, loc="left", fontsize=11, pad=6,
+        )
+    if len(x):
+        ax1.set_xticks(x)
+        ax1.set_xticklabels([pd.Timestamp(d).strftime("%m-%d") for d in df["fecha"]])
+        ax1.text(0.01, 0.03, nota, transform=ax1.transAxes, color="#d7e3f4", fontsize=8,
+                 va="bottom", bbox=dict(fc="#121b2c", ec="#2a3b55", pad=4, alpha=0.92))
+        nets = df["net"].fillna(0).values / 1e6
+        ax2.bar(x, nets, color=["#2ecc71" if v >= 0 else "#e74c3c" for v in nets], width=0.7)
+        ax2.axhline(0, color=fg, lw=0.5)
+        ax2.set_xticks(x)
+        ax2.set_xticklabels([pd.Timestamp(d).strftime("%m-%d") for d in df["fecha"]])
+    ax1.set_ylabel("PRECIO", color=fg, fontsize=8)
     ax2.set_ylabel("NET PREM $M", color=fg, fontsize=8)
-    fig.text(0.01, 0.01,
-             f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
-             f"swing = varios días  |  un C+0d no abre swing",
-             color="#8b9bb0", fontsize=8)
+    fig.text(
+        0.01, 0.01,
+        f"NY {datetime.now(TZ):%H:%M}  |  COL {datetime.now(TZ_COL):%H:%M}  |  "
+        f"swing = varios días  |  un C+0d no abre swing",
+        color="#8b9bb0", fontsize=8,
+    )
     fig.tight_layout(rect=[0, 0.03, 1, 1])
     fig.savefig(ruta, dpi=118, bbox_inches="tight", facecolor=bg)
     plt.close(fig)
     print("  PNG", ruta)
+    if df.empty:
+        return ruta, {}
     ult = df.iloc[-1]
     return ruta, {
         "ticker": grupo, "modo": "SWING", "fecha": str(ult["fecha"]),
