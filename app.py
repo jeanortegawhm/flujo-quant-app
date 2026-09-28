@@ -35,12 +35,9 @@ def fmt_num(x):
         x = float(x)
     except Exception:
         return "—"
-    if abs(x) >= 1e9:
-        return f"${x/1e9:.2f}B"
-    if abs(x) >= 1e6:
-        return f"${x/1e6:.1f}M"
-    if abs(x) >= 1000:
-        return f"${x:,.0f}"
+    if abs(x) >= 1e9: return f"${x/1e9:.2f}B"
+    if abs(x) >= 1e6: return f"${x/1e6:.1f}M"
+    if abs(x) >= 1000: return f"${x:,.0f}"
     return str(x)
 
 clave = st.sidebar.text_input("Clave", type="password")
@@ -49,19 +46,23 @@ if clave != secreto("APP_PASSWORD", "cambiaesta"):
     st.info("Escribe la clave en la barra izquierda y pulsa Enter.")
     st.stop()
 
+from paneles import sesion_habil, ayer_habil
 st.sidebar.header("Franja / tamaño")
 franja_alto = st.sidebar.slider("Alto de la franja", 0.20, 1.20, 0.26, 0.02)
 franja_min = st.sidebar.slider("Ancho bloque (min)", 1, 8, 5, 1)
 fig_ancho = st.sidebar.slider("Ancho del gráfico", 10.0, 16.0, 12.4, 0.2)
 fig_alto = st.sidebar.slider("Alto del gráfico", 10.0, 16.0, 12.0, 0.2)
+dia_lib = st.sidebar.radio("Día libros / GEX / Desk", ["HOY", "AYER"], index=1)
+FECHA_LIB = sesion_habil() if dia_lib == "HOY" else ayer_habil()
+st.sidebar.caption(f"Fecha UW: {FECHA_LIB}")
 
 def correr(nombre, modo):
     script = HOME / nombre
     if not script.exists():
-        st.error("Falta " + script.name)
+        st.error("Falta " + script.name + " en la raíz del repo.")
         return
     box = st.empty()
-    box.info(f"{nombre} · {modo}")
+    box.info(f"Ejecutando {nombre} · {modo}…")
     env = os.environ.copy()
     env["UW_API_KEY"] = secreto("UW_API_KEY", "")
     env["TELEGRAM_BOT_TOKEN"] = secreto("TELEGRAM_BOT_TOKEN", "")
@@ -76,19 +77,42 @@ def correr(nombre, modo):
     env["FRANJA_MIN"] = str(franja_min)
     env["FIG_ANCHO"] = str(fig_ancho)
     env["FIG_ALTO"] = str(fig_alto)
-    p = subprocess.run([sys.executable, "-u", str(script)], capture_output=True, text=True, cwd=str(HOME), env=env)
+    if not env["UW_API_KEY"]:
+        box.empty()
+        st.error("Falta UW_API_KEY en Secrets.")
+        return
+    try:
+        p = subprocess.run(
+            [sys.executable, "-u", str(script)],
+            capture_output=True, text=True, cwd=str(HOME), env=env, timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        box.empty()
+        st.error("Tardó más de 5 min. Vuelve a pulsar.")
+        return
+    except Exception as e:
+        box.empty()
+        st.error(f"No se pudo lanzar: {e}")
+        return
     box.empty()
-    st.success("Listo") if p.returncode == 0 else st.error("Error")
-    if p.stdout:
-        st.text_area("Salida", p.stdout[-3500:], height=160)
-    if p.stderr:
-        st.text_area("Avisos", p.stderr[-1200:], height=90)
+    if p.returncode == 0:
+        st.success("Listo")
+    else:
+        st.error(f"Falló el script (código {p.returncode})")
+    out = (p.stdout or "").strip()
+    err = (p.stderr or "").strip()
+    if out:
+        st.markdown("**Salida**")
+        st.code(out[-4000:], language="text")
+    if err:
+        st.markdown("**Avisos**")
+        st.code(err[-2000:], language="text")
 
 st.markdown("""
 <div class="q-hero">
   <div class="q-kicker">QUANT FLOW</div>
   <div class="q-title"><span>Flujo</span> Quant</div>
-  <div class="q-sub">QQQ/NDX · SPY/SPX · DIA/DJX · GLD — sesión 9:30–16:00 NY — precio UW — el print no es la dirección</div>
+  <div class="q-sub">QQQ/NDX · SPY/SPX · DIA/DJX · GLD — 9:30–16:00 NY — solo Unusual Whales — el print no es la dirección</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -98,20 +122,12 @@ a, b, c, d = st.columns(4)
 a.metric("NY", ny.strftime("%H:%M"))
 b.metric("Colombia", datetime.now(ZoneInfo("America/Bogota")).strftime("%H:%M"))
 c.metric("Mercado", "ABIERTO" if abierto else "CERRADO")
-d.metric("Franja", f"{franja_alto:.2f} / {franja_min}m")
+d.metric("Libros", str(FECHA_LIB))
 
-t1, t2, t3, t4, t5, t6 = st.tabs(
-    ["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "GEX · OI · DP", "Desk UW"]
-)
+t1, t2, t3, t4, t5, t6 = st.tabs(["Flujo", "Swing", "Dashboard", "Libros QQQ/NDX", "GEX · OI · DP", "Desk UW"])
 
 with t1:
-    st.markdown("""
-    <div class="q-box">
-    <b>Qué ves.</b> Tape 9:30–16:00 UW de QQQ, SPY, SPX+SPXW, DIA y GLD.<br>
-    <b>Cómo leer.</b> <i>C+/P+</i> verde = call compra o put venta.
-    <i>C-/P-</i> rojo = call venta o put compra. <i>ML</i> = multi-leg. Suma QD no es un print.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="q-box"><b>Tape UW.</b> <i>C+/P+</i> verde = call compra o put venta. <i>C-/P-</i> rojo = call venta o put compra. <i>ML</i> = multi-leg. Suma QD ≠ print.</div>""", unsafe_allow_html=True)
     f1, f2, f3, f4b = st.columns(4)
     min_p = f1.number_input("Prima mín $", 50000, 3000000, 250000, 10000)
     umb = f2.number_input("Burbuja $M (0=auto)", 0, 500, 0, 5)
@@ -129,31 +145,23 @@ with t1:
         except Exception as e:
             st.error(e)
     x, y, z = st.columns(3)
-    if x.button("Solo AYER", width="stretch"):
+    if x.button("Solo AYER"):
         correr("flujo2.py", "AYER")
-    if y.button("AYER + HOY", type="primary", width="stretch"):
+    if y.button("AYER + HOY", type="primary"):
         correr("flujo2.py", "AMBOS")
-    if z.button("Solo HOY", width="stretch"):
+    if z.button("Solo HOY"):
         correr("flujo2.py", "HOY")
 
 with t2:
-    st.markdown("""
-    <div class="q-box">
-    <b>Qué ves.</b> Swing de los mismos 5 libros. Un print 0DTE no abre swing.
-    </div>
-    """, unsafe_allow_html=True)
-    if st.button("Generar Swing", width="stretch"):
+    st.markdown("""<div class="q-box"><b>Qué ves.</b> Swing de 8 días hábiles. Un print 0DTE no abre swing.</div>""", unsafe_allow_html=True)
+    if st.button("Generar Swing"):
         if (HOME / "flujo_swing.py").exists():
             correr("flujo_swing.py", "AMBOS")
         else:
-            st.warning("Falta flujo_swing.py")
+            st.error("Falta flujo_swing.py junto a app.py")
 
 with t3:
-    st.markdown("""
-    <div class="q-box">
-    <b>Qué ves.</b> Cards + PNGs. Operable con 2 de 3 pilares. QF fuera de rango no cuenta.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="q-box"><b>Dashboard.</b> 2 de 3 pilares. QF fuera de rango = neutro.</div>""", unsafe_allow_html=True)
     res = CARPETA / "resumen.json"
     if res.exists():
         try:
@@ -171,53 +179,40 @@ with t3:
                 if row.get("nota"):
                     st.caption(row.get("nota"))
     else:
-        st.info("Corre Solo AYER o Solo HOY")
+        st.info("Corre Solo AYER, Solo HOY o Generar Swing")
     pngs = sorted(CARPETA.glob("*.png"), key=lambda p: p.stat().st_mtime, reverse=True)
-    for p in pngs[:8]:
+    for p in pngs[:10]:
         if p.stat().st_size <= 3_500_000:
-            st.image(str(p), caption=p.name, width="stretch")
+            st.image(str(p), caption=p.name)
 
 with t4:
-    st.markdown("""
-    <div class="q-box">
-    <b>Qué ves.</b> Libros Hunab / Gregory: QQQ vs NDX, SPY vs SPX, DIA vs DJX.
-    Zoom = spot ±4% UW. GLD va solo.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="q-box"><b>Libros.</b> QQQ vs NDX, SPY vs SPX, DIA vs DJX. Zoom spot ±4%.</div>""", unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
     try:
         from paneles import PARES, gex_niveles, gex_strikes, fig_gex, last_price
-        hoy = datetime.now(ZoneInfo("America/New_York")).date()
+        hoy = FECHA_LIB
         for par_a, par_b in PARES:
             c1, c2 = st.columns(2)
             for col, tk in ((c1, par_a), (c2, par_b)):
                 with col:
                     spot = last_price(tk)
-                    niv = gex_niveles(tk, hoy, spot)
-                    df = gex_strikes(tk, hoy, spot)
-                    st.pyplot(fig_gex(tk, df, niv, spot), width="stretch")
+                    st.pyplot(fig_gex(tk, gex_strikes(tk, hoy, spot), gex_niveles(tk, hoy, spot), spot))
         st.subheader("GLD")
         spot = last_price("GLD")
-        niv = gex_niveles("GLD", hoy, spot)
-        st.pyplot(fig_gex("GLD", gex_strikes("GLD", hoy, spot), niv, spot), width="stretch")
+        st.pyplot(fig_gex("GLD", gex_strikes("GLD", hoy, spot), gex_niveles("GLD", hoy, spot), spot))
     except Exception as e:
         st.error(e)
 
 with t5:
-    st.markdown("""
-    <div class="q-box">
-    <b>Qué ves.</b> GEX cerca del spot, OI y dark pool de la sesión 9:30–16:00 (UW).
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="q-box"><b>GEX · OI · DP.</b> Sesión 9:30–16:00 UW.</div>""", unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
     tk = st.selectbox("Ticker", ["QQQ", "NDX", "SPY", "SPX", "DIA", "DJX", "GLD"])
     try:
         from paneles import gex_niveles, gex_strikes, oi_vol, darkpool, fig_gex, fig_oi, fig_dp, last_price
-        hoy = datetime.now(ZoneInfo("America/New_York")).date()
+        hoy = FECHA_LIB
         spot = last_price(tk)
         g = gex_niveles(tk, hoy, spot)
         o = oi_vol(tk, hoy)
-        df = gex_strikes(tk, hoy, spot)
         a, b, c, d = st.columns(4)
         a.metric("Call wall", str(g.get("call_wall", "—")))
         b.metric("Put wall", str(g.get("put_wall", "—")))
@@ -229,29 +224,21 @@ with t5:
         f.metric("Put OI", f"{float(o.get('put_open_interest') or 0):,.0f}")
         g2.metric("Call vol", f"{float(o.get('call_volume') or 0):,.0f}")
         h.metric("Put vol", f"{float(o.get('put_volume') or 0):,.0f}")
-        st.pyplot(fig_gex(tk, df, g, spot), width="stretch")
-        st.pyplot(fig_oi(tk, o), width="stretch")
-        st.pyplot(fig_dp(tk, darkpool(tk, hoy), spot), width="stretch")
+        st.pyplot(fig_gex(tk, gex_strikes(tk, hoy, spot), g, spot))
+        st.pyplot(fig_oi(tk, o))
+        st.pyplot(fig_dp(tk, darkpool(tk, hoy), spot))
     except Exception as e:
         st.error(e)
 
 with t6:
-    st.markdown("""
-    <div class="q-box">
-    <b>Desk institucional (UW).</b>
-    Flow por strike = dónde se sentó la prima.
-    ΔOI = contratos que se quedaron (no tape; ~6:45 ET).
-    Vanna/charm = cobertura MM más allá de gamma.
-    Multi-leg = spread. Escáner = alertas de todo el mercado.
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("""<div class="q-box"><b>Desk UW.</b> Strike = dónde se sentó la prima. ΔOI = lo que se quedó (~6:45 ET). Vanna/charm = MM. ML = spread.</div>""", unsafe_allow_html=True)
     os.environ["UW_API_KEY"] = secreto("UW_API_KEY", "")
     tk = st.selectbox("Libro", ["QQQ", "NDX", "SPY", "SPX", "DIA", "DJX", "GLD"], key="desk_tk")
     min_scan = st.number_input("Escáner min $M", 0.5, 20.0, 1.5, 0.5)
     try:
         from paneles import last_price
         from desks import flow_strike, greeks_net, oi_change, multi_leg, scanner, fig_flow_strike, fig_oi_chg
-        hoy = datetime.now(ZoneInfo("America/New_York")).date()
+        hoy = FECHA_LIB
         spot = last_price(tk)
         g = greeks_net(tk, hoy)
         a, b, c, d = st.columns(4)
@@ -259,26 +246,22 @@ with t6:
         b.metric("Net vanna", f"{g['net_vanna']:,.0f}")
         c.metric("Net charm", f"{g['net_charm']:,.0f}")
         d.metric("Spot UW", f"{spot:.2f}" if spot else "—")
-        fs = flow_strike(tk, hoy, spot)
-        st.pyplot(fig_flow_strike(tk, fs, spot), width="stretch")
-        oc = oi_change(tk, hoy)
-        st.pyplot(fig_oi_chg(tk, oc), width="stretch")
-        st.subheader("Multi-leg (spreads)")
+        st.pyplot(fig_flow_strike(tk, flow_strike(tk, hoy, spot), spot))
+        st.pyplot(fig_oi_chg(tk, oi_change(tk, hoy)))
+        st.subheader("Multi-leg")
         ml = multi_leg(tk, hoy)
         if ml.empty:
-            st.caption("Sin spreads detectados en la sesión.")
+            st.caption("Sin spreads en esa fecha.")
         else:
             cols = [c for c in ("strategy", "ticker_symbol", "premium", "net_delta", "all_opening_legs") if c in ml.columns]
-            st.dataframe(ml[cols] if cols else ml.head(20), width="stretch")
+            st.dataframe(ml[cols] if cols else ml.head(20))
         st.subheader("Escáner mercado")
         sc = scanner(hoy, int(min_scan * 1_000_000))
         if sc.empty:
-            st.caption("Sin alertas / OI change de mercado.")
+            st.caption("Sin alertas.")
         else:
-            keep = [c for c in ("ticker", "option_chain", "total_premium", "alert_rule",
-                                "has_sweep", "has_multileg", "oi_diff_plain", "option_symbol") if c in sc.columns]
-            st.dataframe(sc[keep].head(30) if keep else sc.head(30), width="stretch")
+            keep = [c for c in ("ticker", "option_chain", "total_premium", "alert_rule", "has_sweep", "has_multileg", "oi_diff_plain", "option_symbol") if c in sc.columns]
+            st.dataframe(sc[keep].head(30) if keep else sc.head(30))
     except Exception as e:
         st.error(e)
-        if "desks" in str(e).lower() or "No module named" in str(e):
-            st.warning("Falta desks.py en la raíz del repo (junto a app.py).")
+        st.warning("Si dice No module named desks: crea desks.py en la raíz, junto a app.py.")

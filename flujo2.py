@@ -84,7 +84,8 @@ def telegram(msg):
     if not tok or not chat:
         return
     try:
-        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage", json={"chat_id": chat, "text": msg}, timeout=12)
+        requests.post(f"https://api.telegram.org/bot{tok}/sendMessage",
+                      json={"chat_id": chat, "text": msg}, timeout=12)
     except Exception:
         pass
 
@@ -145,7 +146,8 @@ def etiqueta_print(r, fecha):
 def niveles(tk, fecha, spot=None):
     raw = {}
     for src in ("oi", "vol"):
-        d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels", {"date": str(fecha), "source": src})
+        d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
+                     {"date": str(fecha), "source": src})
         if not isinstance(d, dict):
             continue
         for k, c in (("CW", "call_wall"), ("PW", "put_wall"), ("QF", "gamma_flip"), ("MAGNET", "gamma_magnet")):
@@ -292,6 +294,10 @@ def precio(grupo, fecha):
     px = _ohlc(tk, "1m", fecha)
     if px.empty:
         px = _ohlc(tk, "5m", fecha)
+    if px.empty and grupo == "SPX":
+        px = _ohlc("SPXW", "1m", fecha)
+        if px.empty:
+            px = _ohlc("SPXW", "5m", fecha)
     if px.empty:
         d = get_json(f"https://api.unusualwhales.com/api/stock/{tk}/quote") or {}
         last = None

@@ -35,7 +35,7 @@ def flow_strike(tk, fecha, spot=None):
         return df
     if "strike" in df.columns:
         df["strike"] = pd.to_numeric(df["strike"], errors="coerce")
-    for c in ("call_premium", "put_premium", "call_volume", "put_volume"):
+    for c in ("call_premium", "put_premium"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
     if "call_premium" not in df.columns:
@@ -58,8 +58,7 @@ def greeks_net(tk, fecha):
     elif isinstance(raw, dict):
         row = raw
     out = {}
-    for k in ("call_gamma", "put_gamma", "call_vanna", "put_vanna", "call_charm", "put_charm",
-              "call_delta", "put_delta"):
+    for k in ("call_gamma", "put_gamma", "call_vanna", "put_vanna", "call_charm", "put_charm"):
         out[k] = fnum(row.get(k)) or 0.0
     out["net_gamma"] = out["call_gamma"] + out["put_gamma"]
     out["net_vanna"] = out["call_vanna"] + out["put_vanna"]
@@ -72,7 +71,7 @@ def oi_change(tk, fecha, limit=25):
     df = pd.DataFrame(raw if isinstance(raw, list) else [])
     if df.empty:
         return df
-    for c in ("curr_oi", "last_oi", "oi_diff_plain", "volume", "avg_price"):
+    for c in ("curr_oi", "last_oi", "oi_diff_plain", "volume"):
         if c in df.columns:
             df[c] = pd.to_numeric(df[c], errors="coerce")
     if "oi_diff_plain" not in df.columns and {"curr_oi", "last_oi"} <= set(df.columns):
@@ -100,8 +99,7 @@ def scanner(fecha, min_prem=1_500_000, limit=40):
         "limit": limit,
     })
     if not isinstance(raw, list) or not raw:
-        raw = get("https://api.unusualwhales.com/api/market/oi-change",
-                  {"date": str(fecha), "limit": limit})
+        raw = get("https://api.unusualwhales.com/api/market/oi-change", {"date": str(fecha), "limit": limit})
     return pd.DataFrame(raw if isinstance(raw, list) else [])
 
 def fig_flow_strike(tk, df, spot):
@@ -121,7 +119,7 @@ def fig_flow_strike(tk, df, spot):
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0)
         ax.set_ylim(spot * 0.96, spot * 1.04)
-    ax.set_title(f"{tk}  prima por strike (sesión)", color="#e8eef7", loc="left", fontsize=10)
+    ax.set_title(f"{tk}  prima por strike", color="#e8eef7", loc="left", fontsize=10)
     ax.set_xlabel("$M", color="#8b9bb0")
     ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7)
     fig.tight_layout()
@@ -132,7 +130,7 @@ def fig_oi_chg(tk, df):
     ax.set_facecolor("#0b1220")
     ax.tick_params(colors="#e8eef7", labelsize=7)
     if df is None or df.empty:
-        ax.set_title(f"{tk}  sin OI change (sale ~6:45 ET)", color="#e8eef7", loc="left")
+        ax.set_title(f"{tk}  sin ΔOI (sale ~6:45 ET)", color="#e8eef7", loc="left")
         return fig
     lab = df.get("option_symbol", df.index.astype(str)).astype(str).str[-15:]
     val = pd.to_numeric(df.get("oi_diff_plain", 0), errors="coerce").fillna(0)

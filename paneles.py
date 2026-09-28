@@ -1,22 +1,21 @@
 import os, requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
 API = os.getenv("UW_API_KEY", "")
+TZ = ZoneInfo("America/New_York")
 PARES = [("QQQ", "NDX"), ("SPY", "SPX"), ("DIA", "DJX")]
 UW_ALIAS = {"NDX": ["NDX", "QQQ"], "SPX": ["SPX", "SPXW"], "DJX": ["DJX", "DIA"]}
+PX_ALIAS = {"SPX": ["SPX", "SPXW"], "NDX": ["NDX", "QQQ"], "DJX": ["DJX", "DIA"]}
 
 def get(url, params=None):
     try:
-        r = requests.get(
-            url,
-            headers={"Authorization": f"Bearer {API}", "Accept": "application/json"},
-            params=params or {},
-            timeout=25,
-        )
+        r = requests.get(url, headers={"Authorization": f"Bearer {API}", "Accept": "application/json"},
+                         params=params or {}, timeout=25)
         if r.status_code != 200:
             return None
         p = r.json()
@@ -30,31 +29,44 @@ def fnum(x):
     except Exception:
         return None
 
+def sesion_habil(d=None):
+    d = d or datetime.now(TZ).date()
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+def ayer_habil():
+    d = sesion_habil() - timedelta(days=1)
+    while d.weekday() >= 5:
+        d -= timedelta(days=1)
+    return d
+
+def _spot_de(raw, tk):
+    if not isinstance(raw, list) or not raw:
+        return None
+    v = fnum(raw[0].get("close"))
+    if not v:
+        return None
+    if tk == "DJX" and v > 2000:
+        v = v / 100.0
+    return round(v, 2)
+
+@lru_cache(maxsize=32)
 def last_price(tk):
-    uw = {"NDX": "NDX", "SPX": "SPX", "DJX": "DJX"}.get(tk, tk)
-    raw = get(f"https://api.unusualwhales.com/api/stock/{uw}/ohlc/1m", {"timeframe": "1D", "limit": 3})
-    if isinstance(raw, list) and raw:
-        v = fnum(raw[0].get("close"))
-        if v:
-            if tk == "DJX" and v > 2000:
-                v = v / 100.0
-            return round(v, 2)
-    raw = get(f"https://api.unusualwhales.com/api/stock/{uw}/ohlc/5m", {"timeframe": "1D", "limit": 3})
-    if isinstance(raw, list) and raw:
-        v = fnum(raw[0].get("close"))
-        if v:
-            if tk == "DJX" and v > 2000:
-                v = v / 100.0
-            return round(v, 2)
-    d = get(f"https://api.unusualwhales.com/api/stock/{uw}/quote") or {}
-    if not isinstance(d, dict):
-        d = {}
-    for k in ("close", "last", "last_price", "price", "mark"):
-        v = fnum(d.get(k))
-        if v:
-            if tk == "DJX" and v > 2000:
-                v = v / 100.0
-            return round(v, 2)
+    for uw in PX_ALIAS.get(tk, [tk]):
+        for size in ("1m", "5m"):
+            v = _spot_de(get(f"https://api.unusualwhales.com/api/stock/{uw}/ohlc/{size}",
+                             {"timeframe": "1D", "limit": 5}), tk)
+            if v:
+                return v
+        d = get(f"https://api.unusualwhales.com/api/stock/{uw}/quote") or {}
+        if isinstance(d, dict):
+            for k in ("close", "last", "last_price", "price", "mark"):
+                v = fnum(d.get(k))
+                if v:
+                    if tk == "DJX" and v > 2000:
+                        v = v / 100.0
+                    return round(v, 2)
     return None
 
 def cerca(v, spot, pct=0.04):
@@ -71,10 +83,7 @@ def cerca(v, spot, pct=0.04):
 def gex_niveles(tk, fecha, spot=None):
     out = {}
     for src in ("oi", "vol"):
-        d = get(
-            f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels",
-            {"date": str(fecha), "source": src},
-        )
+        d = get(f"https://api.unusualwhales.com/api/stock/{tk}/gex-levels", {"date": str(fecha), "source": src})
         if not isinstance(d, dict):
             continue
         for k in ("call_wall", "put_wall", "gamma_flip", "gamma_magnet"):
@@ -101,7 +110,6 @@ def _fetch_strikes(tk, fecha):
         (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike", {"date": str(fecha), "source": "oi"}),
         (f"https://api.unusualwhales.com/api/stock/{tk}/spot-exposures/strike", {"date": str(fecha)}),
         (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure/strike", {"date": str(fecha)}),
-        (f"https://api.unusualwhales.com/api/stock/{tk}/greek-exposure-by-strike", {"date": str(fecha)}),
     ):
         raw = get(path, extra)
         if isinstance(raw, list) and raw:
@@ -109,10 +117,8 @@ def _fetch_strikes(tk, fecha):
     return pd.DataFrame()
 
 def gex_strikes(tk, fecha, spot=None):
-    ticks = UW_ALIAS.get(tk, [tk])
-    df = pd.DataFrame()
-    used = tk
-    for cand in ticks:
+    df, used = pd.DataFrame(), tk
+    for cand in UW_ALIAS.get(tk, [tk]):
         df = _fetch_strikes(cand, fecha)
         if not df.empty:
             used = cand
@@ -143,9 +149,9 @@ def oi_vol(tk, fecha):
 
 def darkpool(tk, fecha=None):
     if fecha is None:
-        fecha = datetime.now(ZoneInfo("America/New_York")).date()
-    a = datetime(fecha.year, fecha.month, fecha.day, 9, 30, tzinfo=ZoneInfo("America/New_York")).astimezone(ZoneInfo("UTC"))
-    b = datetime(fecha.year, fecha.month, fecha.day, 16, 5, tzinfo=ZoneInfo("America/New_York")).astimezone(ZoneInfo("UTC"))
+        fecha = sesion_habil()
+    a = datetime(fecha.year, fecha.month, fecha.day, 9, 30, tzinfo=TZ).astimezone(ZoneInfo("UTC"))
+    b = datetime(fecha.year, fecha.month, fecha.day, 16, 5, tzinfo=TZ).astimezone(ZoneInfo("UTC"))
     raw = get(f"https://api.unusualwhales.com/api/darkpool/{tk}", {
         "date": str(fecha),
         "newer_than": a.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -176,46 +182,32 @@ def fig_gex(tk, df, niv, spot):
     extra = f"  ({tag})" if tag and tag != tk else ""
     if spot:
         ax.set_ylim(spot * 0.96, spot * 1.04)
-    vacio = (
-        df is None or df.empty
-        or float((df.get("call_gex", pd.Series(dtype=float)).abs()
-                  + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0
-    )
+    vacio = df is None or df.empty or float((df.get("call_gex", pd.Series(dtype=float)).abs() + df.get("put_gex", pd.Series(dtype=float)).abs()).sum() or 0) == 0
     if vacio:
         ax.set_title(f"{tk}{extra}  sin GEX cerca del spot", color="#e8eef7", loc="left")
         if spot:
             ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.0, label=f"Spot {spot:.2f}")
             ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7)
-        ax.text(
-            0.03, 0.5,
-            "API sin call_gamma_oi / put_gamma_oi ±4% del spot.\nNo se pinta la cadena lejana.",
-            transform=ax.transAxes, color="#8b9bb0", fontsize=8,
-        )
+        ax.text(0.03, 0.5, "UW sin gamma ±4% del spot.\nNo se pinta la cadena lejana.",
+                transform=ax.transAxes, color="#8b9bb0", fontsize=8)
         return fig
     y = df["strike"].values
-    call = df["call_gex"].fillna(0).values
-    put = -df["put_gex"].fillna(0).abs().values
     h = max((np.max(y) - np.min(y)) / max(len(y), 1) * 0.65, (spot or 100) * 0.0015)
-    ax.barh(y, call, color="#2ecc71", height=h, label="Call GEX (OI)")
-    ax.barh(y, put, color="#9b59b6", height=h, label="Put GEX (OI)")
+    ax.barh(y, df["call_gex"].fillna(0).values, color="#2ecc71", height=h, label="Call GEX")
+    ax.barh(y, -df["put_gex"].fillna(0).abs().values, color="#9b59b6", height=h, label="Put GEX")
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=1.15, label=f"Spot {spot:.2f}")
         ax.set_ylim(spot * 0.96, spot * 1.04)
     lo, hi = ax.get_ylim()
     def linea(v, c, n):
-        if v is None:
-            return
-        if lo <= v <= hi:
+        if v is not None and lo <= v <= hi:
             ax.axhline(v, color=c, ls=":", lw=1.0)
-            ax.text(0.99, v, f" {n} {v:.2f}", transform=ax.get_yaxis_transform(),
-                    color=c, fontsize=7, va="center", ha="right")
+            ax.text(0.99, v, f" {n} {v:.2f}", transform=ax.get_yaxis_transform(), color=c, fontsize=7, va="center", ha="right")
     linea(niv.get("gamma_flip"), "#1aa3a3", "QF")
     linea(niv.get("gamma_magnet"), "#d4af37", "MAG")
     linea(niv.get("call_wall"), "#2ecc71", "CW")
     linea(niv.get("put_wall"), "#e74c3c", "PW")
-    ax.set_title(f"{tk}{extra}  perfil GEX  (spot ±4%)", color="#e8eef7", loc="left", fontsize=10)
-    ax.set_xlabel("GEX", color="#8b9bb0")
-    ax.set_ylabel("Strike", color="#8b9bb0")
+    ax.set_title(f"{tk}{extra}  GEX spot ±4%", color="#e8eef7", loc="left", fontsize=10)
     ax.legend(facecolor="#121b2c", labelcolor="#e8eef7", fontsize=7, loc="lower right")
     fig.tight_layout()
     return fig
@@ -224,13 +216,10 @@ def fig_oi(tk, o):
     fig, ax = plt.subplots(figsize=(7.2, 2.4), facecolor="#0b1220")
     ax.set_facecolor("#0b1220")
     ax.tick_params(colors="#e8eef7", labelsize=8)
-    vals = [
-        float(o.get("call_open_interest") or 0),
-        float(o.get("put_open_interest") or 0),
-        float(o.get("call_volume") or 0),
-        float(o.get("put_volume") or 0),
-    ]
-    ax.bar(["Call OI", "Put OI", "Call vol", "Put vol"], vals, color=["#2ecc71", "#9b59b6", "#5ec8c6", "#e74c3c"])
+    ax.bar(["Call OI", "Put OI", "Call vol", "Put vol"],
+           [float(o.get("call_open_interest") or 0), float(o.get("put_open_interest") or 0),
+            float(o.get("call_volume") or 0), float(o.get("put_volume") or 0)],
+           color=["#2ecc71", "#9b59b6", "#5ec8c6", "#e74c3c"])
     ax.set_title(f"{tk}  OI / volumen", color="#e8eef7", loc="left", fontsize=10)
     fig.tight_layout()
     return fig
@@ -241,19 +230,17 @@ def fig_dp(tk, df, spot=None):
     ax.tick_params(colors="#e8eef7", labelsize=8)
     ax.grid(True, color="#1d2a3d", alpha=0.35)
     if df is None or df.empty or "price" not in df.columns:
-        ax.set_title(f"{tk}  dark pool sin datos de la sesión", color="#e8eef7", loc="left")
+        ax.set_title(f"{tk}  dark pool sin sesión", color="#e8eef7", loc="left")
         return fig
-    size = df.get("notional", df.get("premium", df.get("size", 1)))
     df = df.copy()
-    df["n"] = pd.to_numeric(size, errors="coerce").fillna(0)
+    df["n"] = pd.to_numeric(df.get("notional", df.get("premium", df.get("size", 1))), errors="coerce").fillna(0)
     df = df[(df["price"] > 0) & (df["n"] > 0)]
     if spot:
         df = df[(df["price"] >= spot * 0.97) & (df["price"] <= spot * 1.03)]
     if df.empty:
         ax.set_title(f"{tk}  dark pool vacío cerca del spot", color="#e8eef7", loc="left")
         return fig
-    cap = df["n"].quantile(0.92)
-    df["n"] = df["n"].clip(upper=cap)
+    df["n"] = df["n"].clip(upper=df["n"].quantile(0.92))
     bins = pd.cut(df["price"], bins=min(16, max(6, df["price"].nunique())))
     g = df.groupby(bins, observed=False)["n"].sum()
     mid = [i.mid for i in g.index]
@@ -262,8 +249,6 @@ def fig_dp(tk, df, spot=None):
     if spot:
         ax.axhline(spot, color="#6ea8ff", ls="--", lw=0.9)
         ax.set_ylim(spot * 0.97, spot * 1.03)
-    ax.set_title(f"{tk}  dark pool sesión 9:30–16:00  ({len(df)} prints)", color="#e8eef7", loc="left", fontsize=10)
-    ax.set_xlabel("Notional", color="#8b9bb0")
-    ax.set_ylabel("Precio", color="#8b9bb0")
+    ax.set_title(f"{tk}  dark pool 9:30–16:00 ({len(df)})", color="#e8eef7", loc="left", fontsize=10)
     fig.tight_layout()
     return fig

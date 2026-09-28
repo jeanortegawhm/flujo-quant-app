@@ -1,6 +1,6 @@
-streamlit
+streamlit>=1.40
 streamlit-autorefresh
+requests
 pandas
 numpy
 matplotlib
-requests
